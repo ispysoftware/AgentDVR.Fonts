@@ -145,7 +145,9 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
                 }
 
                 // Assign rphf feature
-                int limit = substitutionCollection[match.StartIndex].UniversalShapingEngineInfo!.Category == "R"
+                // Modified for Agent DVR: match indexes are relative to the run start, as in the loop above
+                // (this read the wrong glyph - or one with no shaping info - for runs not starting at 0).
+                int limit = substitutionCollection[match.StartIndex + index].UniversalShapingEngineInfo!.Category == "R"
                     ? 1
                     : Math.Min(3, match.EndIndex - match.StartIndex);
 

@@ -16,22 +16,41 @@ namespace SixLabors.Fonts.Tables.General
         internal const string TableName = "cmap";
 
         private readonly Format14SubTable[] format14SubTables = Array.Empty<Format14SubTable>();
+        private readonly CMapSubTable? mapping;
+        private readonly bool isSymbol;
         private CodePoint[]? codepoints;
 
         public CMapTable(IEnumerable<CMapSubTable> tables)
         {
-            this.Tables = tables.OrderBy(t => GetPreferredPlatformOrder(t.Platform)).ToArray();
+            this.Tables = tables.ToArray();
             this.format14SubTables = this.Tables.OfType<Format14SubTable>().ToArray();
+
+            // Modified for Agent DVR: characters map through the ONE subtable the font intends, chosen in the
+            // order implementations agree on. Consulting every subtable in turn resolved characters through
+            // encodings the font keeps only for older readers - e.g. a symbol font's characters came from
+            // its Macintosh byte table - and a glyph-0 answer fell through to the next table.
+            this.mapping = this.Tables
+                .Where(t => t is not Format14SubTable && GetEncodingRank(t) < int.MaxValue)
+                .OrderBy(GetEncodingRank)
+                .FirstOrDefault();
+            this.isSymbol = this.mapping is { Platform: PlatformIDs.Windows, Encoding: 0 };
         }
 
         internal CMapSubTable[] Tables { get; }
 
-        private static int GetPreferredPlatformOrder(PlatformIDs platform)
-            => platform switch
+        private static int GetEncodingRank(CMapSubTable t)
+            => (t.Platform, t.Encoding) switch
             {
-                PlatformIDs.Windows => 0,
-                PlatformIDs.Unicode => 1,
-                PlatformIDs.Macintosh => 2,
+                (PlatformIDs.Windows, 0) => 0,   // Symbol: the font is a symbol font.
+                (PlatformIDs.Windows, 10) => 1,  // Unicode, full repertoire.
+                (PlatformIDs.Unicode, 6) => 2,
+                (PlatformIDs.Unicode, 4) => 3,
+                (PlatformIDs.Windows, 1) => 4,   // Unicode, BMP only.
+                (PlatformIDs.Unicode, 3) => 5,
+                (PlatformIDs.Unicode, 2) => 6,
+                (PlatformIDs.Unicode, 1) => 7,
+                (PlatformIDs.Unicode, 0) => 8,
+                (PlatformIDs.Macintosh, 0) => 9, // Mac Roman: only when nothing else is offered.
                 _ => int.MaxValue
             };
 
@@ -65,18 +84,20 @@ namespace SixLabors.Fonts.Tables.General
 
         private bool TryGetGlyphId(CodePoint codePoint, out ushort glyphId)
         {
-            foreach (CMapSubTable t in this.Tables)
+            // Character codes with no glyph map to glyph 0 (.notdef), which counts as not found.
+            if (this.mapping is not null)
             {
-                // Keep looking until we have an index that's not the fallback.
-                // Regardless of the encoding scheme, character codes that do
-                // not correspond to any glyph in the font should be mapped to glyph index 0.
-                // The glyph at this location must be a special glyph representing a missing character, commonly known as .notdef.
-                if (t.TryGetGlyphId(codePoint, out glyphId))
+                if (this.mapping.TryGetGlyphId(codePoint, out glyphId) && glyphId > 0)
                 {
-                    if (glyphId > 0)
-                    {
-                        return true;
-                    }
+                    return true;
+                }
+
+                // Symbol fonts address their glyphs one private-use page up (U+F000 + byte), which is how
+                // Windows reaches them from 8-bit text.
+                if (this.isSymbol && codePoint.Value <= 0xFF
+                    && this.mapping.TryGetGlyphId(new CodePoint(0xF000 + codePoint.Value), out glyphId) && glyphId > 0)
+                {
+                    return true;
                 }
             }
 
@@ -95,11 +116,16 @@ namespace SixLabors.Fonts.Tables.General
                 return this.codepoints;
             }
 
+            // Coverage comes from the subtable lookups use, so the font doesn't advertise characters it
+            // won't resolve.
             HashSet<int> values = new();
 
-            foreach (int v in this.Tables.SelectMany(subtable => subtable.GetAvailableCodePoints()))
+            if (this.mapping is not null)
             {
-                values.Add(v);
+                foreach (int v in this.mapping.GetAvailableCodePoints())
+                {
+                    values.Add(v);
+                }
             }
 
             return this.codepoints = values.OrderBy(v => v).Select(v => new CodePoint(v)).ToArray();
@@ -138,8 +164,17 @@ namespace SixLabors.Fonts.Tables.General
                     case 4:
                         tables.AddRange(Format4SubTable.Load(encoding, reader));
                         break;
+                    case 6:
+                        tables.AddRange(TrimmedArraySubTable.LoadFormat6(encoding, reader));
+                        break;
+                    case 10:
+                        tables.AddRange(TrimmedArraySubTable.LoadFormat10(encoding, reader));
+                        break;
                     case 12:
-                        tables.AddRange(Format12SubTable.Load(encoding, reader));
+                        tables.AddRange(Format12SubTable.Load(encoding, reader, false));
+                        break;
+                    case 13:
+                        tables.AddRange(Format12SubTable.Load(encoding, reader, true));
                         break;
                     case 14:
                         tables.AddRange(Format14SubTable.Load(encoding, reader, offset));

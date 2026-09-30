@@ -8,13 +8,22 @@ using SixLabors.Fonts.WellKnownIds;
 
 namespace SixLabors.Fonts.Tables.General.CMap
 {
+    /// <summary>
+    /// cmap formats 12 (segmented coverage) and 13 (many-to-one range mappings), which share a layout.
+    /// Modified for Agent DVR: groups are binary searched (they are sorted by start code; this scanned them
+    /// all per character, slow in CJK fonts), format 13 is supported, glyph 0 or an id above 65535 is
+    /// "not found", and Format reports 12/13 (it said 4).
+    /// </summary>
     internal sealed class Format12SubTable : CMapSubTable
     {
-        public Format12SubTable(uint language, PlatformIDs platform, ushort encoding, SequentialMapGroup[] groups)
-            : base(platform, encoding, 4)
+        private readonly bool manyToOne;
+
+        public Format12SubTable(uint language, PlatformIDs platform, ushort encoding, SequentialMapGroup[] groups, bool manyToOne = false)
+            : base(platform, encoding, manyToOne ? (ushort)13 : (ushort)12)
         {
             this.Language = language;
             this.SequentialMapGroups = groups;
+            this.manyToOne = manyToOne;
         }
 
         public SequentialMapGroup[] SequentialMapGroups { get; }
@@ -23,20 +32,37 @@ namespace SixLabors.Fonts.Tables.General.CMap
 
         public override bool TryGetGlyphId(CodePoint codePoint, out ushort glyphId)
         {
-            int charAsInt = codePoint.Value;
+            glyphId = 0;
+            uint c = (uint)codePoint.Value;
+            SequentialMapGroup[] groups = this.SequentialMapGroups;
 
-            for (int i = 0; i < this.SequentialMapGroups.Length; i++)
+            int lo = 0;
+            int hi = groups.Length - 1;
+            while (lo <= hi)
             {
-                ref SequentialMapGroup seg = ref this.SequentialMapGroups[i];
-
-                if (charAsInt >= seg.StartCodePoint && charAsInt <= seg.EndCodePoint)
+                int mid = (lo + hi) >> 1;
+                ref SequentialMapGroup group = ref groups[mid];
+                if (c < group.StartCodePoint)
                 {
-                    glyphId = (ushort)(charAsInt - seg.StartCodePoint + seg.StartGlyphId);
+                    hi = mid - 1;
+                }
+                else if (c > group.EndCodePoint)
+                {
+                    lo = mid + 1;
+                }
+                else
+                {
+                    uint gid = this.manyToOne ? group.StartGlyphId : group.StartGlyphId + (c - group.StartCodePoint);
+                    if (gid == 0 || gid > ushort.MaxValue)
+                    {
+                        return false;
+                    }
+
+                    glyphId = (ushort)gid;
                     return true;
                 }
             }
 
-            glyphId = 0;
             return false;
         }
 
@@ -49,6 +75,9 @@ namespace SixLabors.Fonts.Tables.General.CMap
             });
 
         public static IEnumerable<Format12SubTable> Load(IEnumerable<EncodingRecord> encodings, BigEndianBinaryReader reader)
+            => Load(encodings, reader, false);
+
+        public static IEnumerable<Format12SubTable> Load(IEnumerable<EncodingRecord> encodings, BigEndianBinaryReader reader, bool manyToOne)
         {
             // 'cmap' Subtable Format 4:
             // Type               | Name              | Description
@@ -66,6 +95,9 @@ namespace SixLabors.Fonts.Tables.General.CMap
             uint language = reader.ReadUInt32();
             uint numGroups = reader.ReadUInt32();
 
+            // Modified for Agent DVR: never trust a count beyond what the subtable's own length can hold.
+            numGroups = System.Math.Min(numGroups, length >= 16 ? (length - 16) / 12 : 0);
+
             var groups = new SequentialMapGroup[numGroups];
             for (var i = 0; i < numGroups; i++)
             {
@@ -74,7 +106,7 @@ namespace SixLabors.Fonts.Tables.General.CMap
 
             foreach (EncodingRecord encoding in encodings)
             {
-                yield return new Format12SubTable(language, encoding.PlatformID, encoding.EncodingID, groups);
+                yield return new Format12SubTable(language, encoding.PlatformID, encoding.EncodingID, groups, manyToOne);
             }
         }
 

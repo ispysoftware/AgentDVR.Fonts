@@ -55,3 +55,11 @@ Modified by iSpyConnect / The Playful Group for Agent DVR. Changes from v1.0.1:
   not drawn but kept their glyph's advance, leaving gaps (e.g. in .NET right-to-left date strings).
   They still take part in substitution and positioning, and a glyph a lookup substituted keeps its
   advance.
+- cmap: characters map through the one subtable the font intends (Windows symbol, then full
+  Unicode, then BMP Unicode, Macintosh Roman last) instead of the first subtable that answers;
+  symbol fonts also try U+F000+code; reported coverage follows the same subtable. Formats 6, 10
+  and 13 are read (new `TrimmedArraySubTable`; format 13 shares format 12's class). Format 12/13
+  groups are binary searched, their count is capped by the subtable length, and ids 0 or above
+  65535 are "not found".
+- Universal Shaping Engine: the reph check read the glyph at the run-relative match index without
+  the run offset (wrong glyph, or a crash, for runs not starting at 0).
