@@ -2,46 +2,19 @@
 <Project>
 
   <!--
-    Directory.Build.props is automatically picked up and imported by
-    Microsoft.Common.props. This file needs to exist, even if empty so that
-    files in the parent directory tree, with the same name, are not imported
-    instead. The import fairly early and only Sdk.props will have been imported
-    beforehand. We also don't need to add ourselves to MSBuildAllProjects, as
-    that is done by the file that imports us.
+    Agent DVR fork (branch "agent", from upstream tag v1.0.1 - the last Apache-2.0 release).
+    Self-contained build: upstream's shared-infrastructure props (StyleCop, strong naming,
+    artifacts/ output tree, extra restore feeds) are not imported, and the few shared
+    sources it provided live in src/SixLabors.Fonts/SharedInfrastructure.
   -->
 
   <PropertyGroup>
-    <!-- This MUST be defined before importing props. -->
-    <SixLaborsSolutionDirectory>$(MSBuildThisFileDirectory)</SixLaborsSolutionDirectory>
-  </PropertyGroup>
-
-  <!-- Import the shared global .props file -->
-  <Import Project="$(MSBuildThisFileDirectory)shared-infrastructure\msbuild\props\SixLabors.Global.props" />
-
-  <!--Add Feedz.io restore sources while we wait for the ability to update shared infrastructure-->
-  <PropertyGroup>
-    <RestoreSources>
-      $(RestoreSources);
-      https://f.feedz.io/sixlabors/sixlabors/nuget/index.json;
-    </RestoreSources>
-  </PropertyGroup>
-  
-  <!--
-    https://apisof.net/
-    +===================+=====================+
-    | SUPPORTS          | NULLABLE_ATTRIBUTES |
-    +===================+=====================+
-    | netcoreapp3.1     |         Y           |
-    | netstandard2.1    |         Y           |
-    | netstandard2.0    |         N           |
-    +===================+=====================+
-  -->
-
-  <PropertyGroup Condition="'$(TargetFramework)' == 'netcoreapp3.1'">
-    <DefineConstants>$(DefineConstants);NULLABLE_ATTRIBUTES</DefineConstants>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(TargetFramework)' == 'netstandard2.1'">
-    <DefineConstants>$(DefineConstants);NULLABLE_ATTRIBUTES</DefineConstants>
+    <LangVersion>9.0</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NeutralLanguage>en</NeutralLanguage>
+    <DebugType>portable</DebugType>
+    <!-- Upstream's per-framework feature switches, as set for netcoreapp3.1 and later. -->
+    <DefineConstants>$(DefineConstants);SUPPORTS_MATHF;SUPPORTS_HASHCODE;SUPPORTS_EXTENDED_INTRINSICS;SUPPORTS_SPAN_STREAM;SUPPORTS_ENCODING_STRING;SUPPORTS_RUNTIME_INTRINSICS;SUPPORTS_CODECOVERAGE;SUPPORTS_HOTPATH;SUPPORTS_CREATESPAN;SUPPORTS_BITOPERATIONS;NULLABLE_ATTRIBUTES</DefineConstants>
   </PropertyGroup>
 
 </Project>
