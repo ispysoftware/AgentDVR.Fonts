@@ -72,7 +72,8 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                     return false;
                 }
 
-                if (this.seqRuleSetTables is null || this.seqRuleSetTables.Length is 0)
+                // Modified for Agent DVR: bounds-checked coverage index.
+                if (this.seqRuleSetTables is null || (uint)offset >= (uint)this.seqRuleSetTables.Length)
                 {
                     return false;
                 }
@@ -175,7 +176,8 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
 
                 // Search in the class definition table to find the class value assigned to the currently glyph.
                 int classId = this.inputClassDefinitionTable.ClassIndexOf(glyphId);
-                ChainedClassSequenceRuleTable[]? rules = classId >= 0 && classId < this.sequenceRuleSetTables.Length ? this.sequenceRuleSetTables[classId].SubRules : null;
+                // Modified for Agent DVR: a NULL rule set (legal) means no rules.
+                ChainedClassSequenceRuleTable[]? rules = classId >= 0 && classId < this.sequenceRuleSetTables.Length ? this.sequenceRuleSetTables[classId]?.SubRules : null;
                 if (rules is null)
                 {
                     return false;

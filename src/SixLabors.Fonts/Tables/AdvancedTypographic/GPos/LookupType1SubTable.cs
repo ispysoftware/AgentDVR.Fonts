@@ -150,8 +150,10 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                 return false;
             }
 
+            // Modified for Agent DVR: bounds-checked - a coverage table can list more glyphs than the
+            // subtable has records for.
             int coverage = this.coverageTable.CoverageIndexOf(glyphId);
-            if (coverage > -1)
+            if ((uint)coverage < (uint)this.valueRecords.Length)
             {
                 ValueRecord record = this.valueRecords[coverage];
                 AdvancedTypographicUtils.ApplyPosition(collection, index, record);

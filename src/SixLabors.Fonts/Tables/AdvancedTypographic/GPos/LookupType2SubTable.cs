@@ -106,8 +106,9 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                     return false;
                 }
 
+                // Modified for Agent DVR: bounds-checked coverage index.
                 int coverage = this.coverageTable.CoverageIndexOf(glyphId);
-                if (coverage > -1)
+                if ((uint)coverage < (uint)this.pairSets.Length)
                 {
                     PairSetTable pairSet = this.pairSets[coverage];
                     ushort glyphId2 = collection[index + 1].GlyphId;
@@ -283,7 +284,19 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
 
                     int classDef2 = this.classDefinitionTable2.ClassIndexOf(glyphId2);
 
+                    // Modified for Agent DVR: class values beyond class1Count/class2Count are malformed;
+                    // ignore the pair rather than throw.
+                    if ((uint)classDef1 >= (uint)this.class1Records.Length)
+                    {
+                        return false;
+                    }
+
                     Class1Record class1Record = this.class1Records[classDef1];
+                    if ((uint)classDef2 >= (uint)class1Record.Class2Records.Length)
+                    {
+                        return false;
+                    }
+
                     Class2Record class2Record = class1Record.Class2Records[classDef2];
 
                     ValueRecord record1 = class2Record.ValueRecord1;

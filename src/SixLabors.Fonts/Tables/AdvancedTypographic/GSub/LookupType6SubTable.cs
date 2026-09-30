@@ -68,14 +68,16 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GSub
                 return false;
             }
 
-            if (this.seqRuleSetTables is null || this.seqRuleSetTables.Length is 0)
+            // Modified for Agent DVR: bounds-checked, and a NULL rule set (legal) means no rules.
+            if (this.seqRuleSetTables is null
+                || (uint)offset >= (uint)this.seqRuleSetTables.Length
+                || this.seqRuleSetTables[offset] is not ChainedSequenceRuleSetTable seqRuleSet)
             {
                 return false;
             }
 
             // Apply ruleset for the given glyph id.
             SkippingGlyphIterator iterator = new(fontMetrics, collection, index, this.LookupFlags);
-            ChainedSequenceRuleSetTable seqRuleSet = this.seqRuleSetTables[offset];
             ChainedSequenceRuleTable[] rules = seqRuleSet.SequenceRuleTables;
             for (int i = 0; i < rules.Length; i++)
             {

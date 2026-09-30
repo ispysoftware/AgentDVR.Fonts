@@ -101,8 +101,10 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                     return false;
                 }
 
+                // Modified for Agent DVR: every index taken from the font is bounds-checked, and a NULL
+                // ligature anchor means the lookup doesn't apply.
                 int markIndex = this.markCoverage.CoverageIndexOf(glyphId);
-                if (markIndex < 0)
+                if ((uint)markIndex >= (uint)this.markArrayTable.MarkRecords.Length)
                 {
                     return false;
                 }
@@ -125,7 +127,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
 
                 ushort baseGlyphId = collection[baseGlyphIndex].GlyphId;
                 int ligatureIndex = this.ligatureCoverage.CoverageIndexOf(baseGlyphId);
-                if (ligatureIndex < 0)
+                if ((uint)ligatureIndex >= (uint)this.ligatureArrayTable.LigatureAttachTables.Length)
                 {
                     return false;
                 }
@@ -141,8 +143,22 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                     ? Math.Min(markGlyph.LigatureComponent, ligGlyph.CodePointCount) - 1
                     : ligGlyph.CodePointCount - 1;
 
+                // The font's component count needn't match the glyph's code point count; clamp to it.
+                ComponentRecord[] components = ligatureAttach.ComponentRecords;
+                if (components.Length == 0)
+                {
+                    return false;
+                }
+
+                compIndex = Math.Clamp(compIndex, 0, components.Length - 1);
+
                 MarkRecord markRecord = this.markArrayTable.MarkRecords[markIndex];
-                AnchorTable baseAnchor = ligatureAttach.ComponentRecords[compIndex].LigatureAnchorTables[markRecord.MarkClass];
+                AnchorTable?[] anchors = components[compIndex].LigatureAnchorTables;
+                if ((uint)markRecord.MarkClass >= (uint)anchors.Length || anchors[markRecord.MarkClass] is not AnchorTable baseAnchor)
+                {
+                    return false;
+                }
+
                 AdvancedTypographicUtils.ApplyAnchor(fontMetrics, collection, index, baseAnchor, markRecord, baseGlyphIndex);
 
                 return true;

@@ -126,8 +126,9 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GSub
                 return false;
             }
 
+            // Modified for Agent DVR: bounds-checked coverage index.
             int offset = this.coverageTable.CoverageIndexOf(glyphId);
-            if (offset <= -1)
+            if ((uint)offset >= (uint)this.ligatureSetTables.Length)
             {
                 return false;
             }

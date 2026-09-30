@@ -30,8 +30,36 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
             {
                 1 => ClassDefinitionFormat1Table.Load(reader),
                 2 => ClassDefinitionFormat2Table.Load(reader),
-                _ => throw new InvalidFontFileException($"Invalid value for 'classFormat' {classFormat}. Should be '1' or '2'.")
+
+                // Modified for Agent DVR: an unknown format puts every glyph in class 0 (the spec's
+                // default class) rather than failing the whole font.
+                _ => EmptyClassDefinitionTable.Instance
             };
+        }
+
+        /// <summary>
+        /// Loads a class definition that may be absent: a NULL (zero) offset or an unknown format gives null.
+        /// </summary>
+        /// <param name="reader">The big endian binary reader.</param>
+        /// <param name="offset">The absolute offset, or 0 for none.</param>
+        /// <returns>The table, or null.</returns>
+        public static ClassDefinitionTable? LoadOptional(BigEndianBinaryReader reader, long offset)
+        {
+            if (offset == 0)
+            {
+                return null;
+            }
+
+            ClassDefinitionTable table = Load(reader, offset);
+            return table == EmptyClassDefinitionTable.Instance ? null : table;
+        }
+
+        /// <summary>A class definition that puts every glyph in class 0.</summary>
+        internal sealed class EmptyClassDefinitionTable : ClassDefinitionTable
+        {
+            public static readonly EmptyClassDefinitionTable Instance = new();
+
+            public override int ClassIndexOf(ushort glyphId) => 0;
         }
     }
 

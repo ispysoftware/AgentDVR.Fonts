@@ -113,8 +113,18 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GSub
                 return false;
             }
 
+            // Modified for Agent DVR, per the spec: the covered glyph alone is replaced by
+            // substituteGlyphIDs[coverage index]. This used to overwrite the glyphs from here onwards with
+            // the whole substitute array, start the lookahead on the covered glyph itself rather than the
+            // one after it, and read backtrack/lookahead glyphs past either end of the run.
             int offset = this.coverageTable.CoverageIndexOf(glyphId);
-            if (offset <= -1)
+            if ((uint)offset >= (uint)this.substituteGlyphIds.Length)
+            {
+                return false;
+            }
+
+            if (index - this.backtrackCoverageTables.Length < 0
+                || index + this.lookaheadCoverageTables.Length >= collection.Count)
             {
                 return false;
             }
@@ -130,22 +140,15 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GSub
 
             for (int i = 0; i < this.lookaheadCoverageTables.Length; ++i)
             {
-                ushort id = collection[index + i].GlyphId;
+                ushort id = collection[index + 1 + i].GlyphId;
                 if (id == 0 || this.lookaheadCoverageTables[i].CoverageIndexOf(id) < 0)
                 {
                     return false;
                 }
             }
 
-            // It's a match. Perform substitutions and return true if anything changed.
-            bool hasChanged = false;
-            for (int i = 0; i < this.substituteGlyphIds.Length; i++)
-            {
-                collection.Replace(index + i, this.substituteGlyphIds[i]);
-                hasChanged = true;
-            }
-
-            return hasChanged;
+            collection.Replace(index, this.substituteGlyphIds[offset]);
+            return true;
         }
     }
 }

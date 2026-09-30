@@ -100,8 +100,9 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                     return false;
                 }
 
+                // Modified for Agent DVR: coverage indexes are bounds-checked against the anchor records.
                 int coverageNext = this.coverageTable.CoverageIndexOf(nextGlyphId);
-                if (coverageNext < 0)
+                if ((uint)coverageNext >= (uint)this.entryExitAnchors.Length)
                 {
                     return false;
                 }
@@ -114,7 +115,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                 }
 
                 int coverage = this.coverageTable.CoverageIndexOf(glyphId);
-                if (coverage < 0)
+                if ((uint)coverage >= (uint)this.entryExitAnchors.Length)
                 {
                     return false;
                 }

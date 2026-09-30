@@ -130,25 +130,22 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
             ushort markGlyphSetsDefOffset = 0;
             uint itemVarStoreOffset = 0;
 
-            switch (minorVersion)
+            // Modified for Agent DVR: minor versions are backwards compatible, so read the fields this
+            // version has rather than rejecting the font (1 is laid out like 0, and above 3 like 3).
+            if (minorVersion >= 2)
             {
-                case 0:
-                    break;
-                case 2:
-                    markGlyphSetsDefOffset = reader.ReadUInt16();
-                    break;
-                case 3:
-                    markGlyphSetsDefOffset = reader.ReadUInt16();
-                    itemVarStoreOffset = reader.ReadUInt32();
-                    break;
-                default:
-                    throw new InvalidFontFileException($"Invalid value for 'minor version' {minorVersion} of GDEF table. Should be '0', '2' or '3'.");
+                markGlyphSetsDefOffset = reader.ReadUInt16();
             }
 
-            ClassDefinitionTable? classDefinitionTable = glyphClassDefOffset is 0 ? null : ClassDefinitionTable.Load(reader, glyphClassDefOffset);
+            if (minorVersion >= 3)
+            {
+                itemVarStoreOffset = reader.ReadUInt32();
+            }
+
+            ClassDefinitionTable? classDefinitionTable = ClassDefinitionTable.LoadOptional(reader, glyphClassDefOffset);
             AttachmentListTable? attachmentListTable = attachListOffset is 0 ? null : AttachmentListTable.Load(reader, attachListOffset);
             LigatureCaretList? ligatureCaretList = ligatureCaretListOffset is 0 ? null : LigatureCaretList.Load(reader, ligatureCaretListOffset);
-            ClassDefinitionTable? markAttachmentClassDef = markAttachClassDefOffset is 0 ? null : ClassDefinitionTable.Load(reader, markAttachClassDefOffset);
+            ClassDefinitionTable? markAttachmentClassDef = ClassDefinitionTable.LoadOptional(reader, markAttachClassDefOffset);
             MarkGlyphSetsTable? markGlyphSetsTable = markGlyphSetsDefOffset is 0 ? null : MarkGlyphSetsTable.Load(reader, markGlyphSetsDefOffset);
 
             var glyphDefinitionTable = new GlyphDefinitionTable()

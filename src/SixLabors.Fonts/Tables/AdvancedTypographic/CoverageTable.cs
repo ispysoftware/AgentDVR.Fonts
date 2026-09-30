@@ -26,8 +26,19 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
             {
                 1 => CoverageFormat1Table.Load(reader),
                 2 => CoverageFormat2Table.Load(reader),
-                _ => throw new InvalidFontFileException($"Invalid value for 'coverageFormat' {coverageFormat}. Should be '1' or '2'.")
+
+                // Modified for Agent DVR: an unknown format covers nothing (as HarfBuzz does) rather than
+                // failing the whole font - seen in shipping fonts such as SofiaSans Condensed.
+                _ => EmptyCoverageTable.Instance
             };
+        }
+
+        /// <summary>A coverage table that matches no glyphs.</summary>
+        internal sealed class EmptyCoverageTable : CoverageTable
+        {
+            public static readonly EmptyCoverageTable Instance = new();
+
+            public override int CoverageIndexOf(ushort glyphId) => -1;
         }
 
         public static CoverageTable[] LoadArray(BigEndianBinaryReader reader, long offset, ReadOnlySpan<ushort> coverageOffsets)

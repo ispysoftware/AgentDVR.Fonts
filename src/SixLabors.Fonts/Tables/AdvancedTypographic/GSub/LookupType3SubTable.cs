@@ -96,9 +96,10 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GSub
                 return false;
             }
 
+            // Modified for Agent DVR: bounds-checked coverage index, and an empty alternate set is skipped.
             int offset = this.coverageTable.CoverageIndexOf(glyphId);
 
-            if (offset > -1)
+            if ((uint)offset < (uint)this.alternateSetTables.Length && this.alternateSetTables[offset].AlternateGlyphs.Length > 0)
             {
                 // TODO: We're just choosing the first alternative here.
                 // It looks like the choice is arbitrary and should be determined by

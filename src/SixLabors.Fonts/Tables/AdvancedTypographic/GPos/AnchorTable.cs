@@ -52,8 +52,25 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                 1 => AnchorFormat1.Load(reader),
                 2 => AnchorFormat2.Load(reader),
                 3 => AnchorFormat3.Load(reader),
-                _ => throw new InvalidFontFileException($"anchorFormat identifier {anchorFormat} is invalid. Should be '1', '2' or '3'.")
+
+                // Modified for Agent DVR: an unknown format is an anchor at the origin (as HarfBuzz does)
+                // rather than failing the whole font - Noto Sans Regular can trigger this.
+                _ => EmptyAnchorTable.Instance
             };
+        }
+
+        /// <summary>An anchor at the glyph origin.</summary>
+        internal sealed class EmptyAnchorTable : AnchorTable
+        {
+            public static readonly EmptyAnchorTable Instance = new();
+
+            private EmptyAnchorTable()
+                : base(0, 0)
+            {
+            }
+
+            public override AnchorXY GetAnchor(FontMetrics fontMetrics, GlyphShapingData data, GlyphPositioningCollection collection)
+                => new(0, 0);
         }
 
         internal sealed class AnchorFormat1 : AnchorTable

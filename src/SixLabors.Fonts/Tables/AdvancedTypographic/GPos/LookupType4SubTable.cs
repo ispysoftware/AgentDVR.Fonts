@@ -97,8 +97,10 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                     return false;
                 }
 
+                // Modified for Agent DVR: every index taken from the font is bounds-checked, and a NULL base
+                // anchor (legal: "no anchor for this mark class") means the lookup doesn't apply.
                 int markIndex = this.markCoverage.CoverageIndexOf(glyphId);
-                if (markIndex == -1)
+                if ((uint)markIndex >= (uint)this.markArrayTable.MarkRecords.Length)
                 {
                     return false;
                 }
@@ -121,13 +123,18 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
 
                 ushort baseGlyphId = collection[baseGlyphIndex].GlyphId;
                 int baseIndex = this.baseCoverage.CoverageIndexOf(baseGlyphId);
-                if (baseIndex < 0)
+                if ((uint)baseIndex >= (uint)this.baseArrayTable.BaseRecords.Length)
                 {
                     return false;
                 }
 
                 MarkRecord markRecord = this.markArrayTable.MarkRecords[markIndex];
-                AnchorTable baseAnchor = this.baseArrayTable.BaseRecords[baseIndex].BaseAnchorTables[markRecord.MarkClass];
+                AnchorTable?[] baseAnchors = this.baseArrayTable.BaseRecords[baseIndex].BaseAnchorTables;
+                if ((uint)markRecord.MarkClass >= (uint)baseAnchors.Length || baseAnchors[markRecord.MarkClass] is not AnchorTable baseAnchor)
+                {
+                    return false;
+                }
+
                 AdvancedTypographicUtils.ApplyAnchor(fontMetrics, collection, index, baseAnchor, markRecord, baseGlyphIndex);
 
                 return true;

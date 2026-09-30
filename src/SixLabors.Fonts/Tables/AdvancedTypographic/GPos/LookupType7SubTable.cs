@@ -60,15 +60,15 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                     return false;
                 }
 
+                // Modified for Agent DVR: bounds-checked, and a NULL rule set (legal) means no rules.
                 int offset = this.coverageTable.CoverageIndexOf(glyphId);
-                if (offset <= -1)
+                if ((uint)offset >= (uint)this.seqRuleSetTables.Length || this.seqRuleSetTables[offset] is not SequenceRuleSetTable ruleSetTable)
                 {
                     return false;
                 }
 
                 // TODO: Check this.
                 // https://docs.microsoft.com/en-us/typography/opentype/spec/gsub#example-7-contextual-substitution-format-1
-                SequenceRuleSetTable ruleSetTable = this.seqRuleSetTables[offset];
                 SkippingGlyphIterator iterator = new(fontMetrics, collection, index, this.LookupFlags);
                 foreach (SequenceRuleTable ruleTable in ruleSetTable.SequenceRuleTables)
                 {
@@ -144,13 +144,13 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                     return false;
                 }
 
+                // Modified for Agent DVR: classes without a rule set (beyond the array, or NULL) have no rules.
                 int offset = this.classDefinitionTable.ClassIndexOf(glyphId);
-                if (offset < 0)
+                if ((uint)offset >= (uint)this.sequenceRuleSetTables.Length || this.sequenceRuleSetTables[offset] is not ClassSequenceRuleSetTable ruleSetTable)
                 {
                     return false;
                 }
 
-                ClassSequenceRuleSetTable ruleSetTable = this.sequenceRuleSetTables[offset];
                 SkippingGlyphIterator iterator = new(fontMetrics, collection, index, this.LookupFlags);
                 foreach (ClassSequenceRuleTable ruleTable in ruleSetTable.SequenceRuleTables)
                 {

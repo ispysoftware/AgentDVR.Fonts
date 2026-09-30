@@ -33,9 +33,14 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
 
             var seqRuleSets = new SequenceRuleSetTable[seqRuleSetCount];
 
+            // Modified for Agent DVR: a NULL offset (legal) leaves the rule set null, as the other three
+            // loaders here already do, instead of parsing the subtable header as a rule set.
             for (int i = 0; i < seqRuleSets.Length; i++)
             {
-                seqRuleSets[i] = SequenceRuleSetTable.Load(reader, offset + seqRuleSetOffsets[i]);
+                if (seqRuleSetOffsets[i] > 0)
+                {
+                    seqRuleSets[i] = SequenceRuleSetTable.Load(reader, offset + seqRuleSetOffsets[i]);
+                }
             }
 
             coverageTable = CoverageTable.Load(reader, offset + coverageOffset);
