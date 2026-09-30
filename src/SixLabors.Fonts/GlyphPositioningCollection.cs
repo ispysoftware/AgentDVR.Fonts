@@ -187,7 +187,15 @@ namespace SixLabors.Fonts
                                 maxAdvancedHeight = Math.Max(maxAdvancedHeight, metrics[k].AdvanceHeight);
                             }
 
-                            this.glyphs.Insert(i + replacementCount, new(offset, new(shape, true) { Bounds = new(0, 0, maxAdvancedWidth, maxAdvancedHeight) }, pointSize, metrics.ToArray()));
+                            // Modified for Agent DVR: the advance goes in the layout direction only, as TryAdd does.
+                            // Setting both put the vertical advance (a whole line height) into horizontal text,
+                            // and mark attachment subtracts the advances between base and mark - so every mark from
+                            // a fallback font (Devanagari vowel signs, virama, reph...) was pushed a line down,
+                            // out of the text box.
+                            GlyphShapingBounds bounds = AdvancedTypographicUtils.IsVerticalGlyph(codePoint, layoutMode)
+                                ? new(0, 0, 0, maxAdvancedHeight)
+                                : new(0, 0, maxAdvancedWidth, 0);
+                            this.glyphs.Insert(i + replacementCount, new(offset, new(shape, true) { Bounds = bounds }, pointSize, metrics.ToArray()));
                             replacementCount++;
                         }
                     }
