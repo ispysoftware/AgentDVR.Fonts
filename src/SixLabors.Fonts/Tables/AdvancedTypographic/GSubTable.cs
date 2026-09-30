@@ -175,7 +175,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
                             s++;
                         }
 
-                        List<FeatureLookup> merged = AdvancedTypographicUtils.CollectLookups(this.FeatureList, this.LookupList.LookupTables.Length, langSys, group);
+                        FeatureLookup[] merged = AdvancedTypographicUtils.CollectLookups(this.FeatureList, this.LookupList.LookupTables.Length, langSys, group);
                         this.ApplyLookups(fontMetrics, collection, ref iterator, merged, index, ref count, ref i, maxCount, maxOperationsCount, ref currentOperations);
                         continue;
                     }
@@ -189,7 +189,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
                     i += delta;
 
                     group.Add(stage.FeatureTag);
-                    List<FeatureLookup> lookups = AdvancedTypographicUtils.CollectLookups(this.FeatureList, this.LookupList.LookupTables.Length, langSys, group);
+                    FeatureLookup[] lookups = AdvancedTypographicUtils.CollectLookups(this.FeatureList, this.LookupList.LookupTables.Length, langSys, group);
                     this.ApplyLookups(fontMetrics, collection, ref iterator, lookups, index, ref count, ref i, maxCount, maxOperationsCount, ref currentOperations);
 
                     collectionCount = collection.Count;
@@ -218,7 +218,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
             int maxOperationsCount,
             ref int currentOperations)
         {
-            if (this.TryGetFeatureLookups(in featureTag, current, out List<FeatureLookup>? lookups))
+            if (this.TryGetFeatureLookups(in featureTag, current, out FeatureLookup[]? lookups))
             {
                 this.ApplyLookups(fontMetrics, collection, ref iterator, lookups, index, ref count, ref i, maxCount, maxOperationsCount, ref currentOperations);
             }
@@ -229,11 +229,11 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
         internal bool TryGetFeatureLookups(
             in Tag feature,
             ScriptClass script,
-            [NotNullWhen(true)] out List<FeatureLookup>? value)
+            [NotNullWhen(true)] out FeatureLookup[]? value)
         {
             LangSysTable? langSys = AdvancedTypographicUtils.SelectLangSys(this.ScriptList, script);
             value = AdvancedTypographicUtils.CollectLookups(this.FeatureList, this.LookupList.LookupTables.Length, langSys, new[] { feature });
-            return value.Count > 0;
+            return value.Length > 0;
         }
 
         /// <summary>
@@ -249,7 +249,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
             FontMetrics fontMetrics,
             GlyphSubstitutionCollection collection,
             ref SkippingGlyphIterator iterator,
-            List<FeatureLookup> lookups,
+            FeatureLookup[] lookups,
             int index,
             ref int count,
             ref int i,

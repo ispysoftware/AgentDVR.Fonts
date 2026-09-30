@@ -19,7 +19,11 @@ namespace SixLabors.Fonts
         /// <summary>
         /// Initializes a new instance of the <see cref="GlyphShapingData"/> class.
         /// </summary>
-        public GlyphShapingData(TextRun textRun) => this.TextRun = textRun;
+        public GlyphShapingData(TextRun textRun)
+        {
+            this.TextRun = textRun;
+            this.Features = new List<TagEntry>(FeatureCapacity);
+        }
 
         /// <summary>
         /// Initializes a new instance of the <see cref="GlyphShapingData"/> class.
@@ -57,10 +61,7 @@ namespace SixLabors.Fonts
                     data.IndicShapingEngineInfo.Syllable);
             }
 
-            if (!clearFeatures)
-            {
-                this.Features = new(data.Features);
-            }
+            this.Features = clearFeatures ? new List<TagEntry>(FeatureCapacity) : new List<TagEntry>(data.Features);
 
             this.Bounds = data.Bounds;
         }
@@ -127,7 +128,12 @@ namespace SixLabors.Fonts
         /// <summary>
         /// Gets or sets the collection of features.
         /// </summary>
-        public List<TagEntry> Features { get; set; } = new List<TagEntry>();
+        public List<TagEntry> Features { get; set; }
+
+        // Modified for Agent DVR: every glyph gets 20-30 feature entries from the shaper; the list is sized for
+        // them rather than grown through 4, 8, 16, 32. Set in the constructors, not by an initializer - that ran
+        // before the copy constructor replaced it, allocating every copied glyph's list twice.
+        private const int FeatureCapacity = 32;
 
         /// <summary>
         /// Gets or sets the shaping bounds.

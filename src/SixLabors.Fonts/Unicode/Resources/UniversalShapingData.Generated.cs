@@ -9,7 +9,7 @@ namespace SixLabors.Fonts.Unicode.Resources
 {
     internal static class UniversalShapingData
     {
-        public static string[] Categories => new string[]
+        public static string[] Categories { get; } = new string[]
         {
             "O",
             "IND",
@@ -51,7 +51,7 @@ namespace SixLabors.Fonts.Unicode.Resources
             "HN"
         };
 
-        public static Dictionary<int, int[]> Decompositions => new()
+        public static Dictionary<int, int[]> Decompositions { get; } = new()
         {
             { 0x9CB, new int[] { 0x9C7,0x9BE } },
             { 0x9CC, new int[] { 0x9C7,0x9D7 } },

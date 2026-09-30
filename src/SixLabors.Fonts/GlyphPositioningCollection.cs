@@ -90,27 +90,81 @@ namespace SixLabors.Fonts
         /// <returns>The metrics.</returns>
         public bool TryGetGlyphMetricsAtOffset(int offset, out float pointSize, out bool isDecomposed, [NotNullWhen(true)] out IReadOnlyList<GlyphMetrics>? metrics)
         {
-            List<GlyphMetrics> match = new();
-            pointSize = 0;
-            isDecomposed = false;
-            for (int i = 0; i < this.glyphs.Count; i++)
+            // Modified for Agent DVR: offsets are sorted (reordering moves glyph data, not offsets), so the
+            // first glyph at the offset is found by binary search, and a single glyph's metrics array is
+            // returned as is. It scanned from the start and built a new list for every code point - quadratic,
+            // and the biggest single cost of laying out a line.
+            int i = this.LowerBound(offset);
+            if (i >= this.glyphs.Count || this.glyphs[i].Offset != offset)
             {
-                if (this.glyphs[i].Offset == offset)
-                {
-                    GlyphPositioningData glyph = this.glyphs[i];
-                    isDecomposed = glyph.Data.IsDecomposed;
-                    pointSize = glyph.PointSize;
-                    match.AddRange(glyph.Metrics);
-                }
-                else if (match.Count > 0)
-                {
-                    // Offsets, though non-sequential, are sorted, so we can stop searching.
-                    break;
-                }
+                pointSize = 0;
+                isDecomposed = false;
+                metrics = null;
+                return false;
+            }
+
+            GlyphPositioningData first = this.glyphs[i];
+            isDecomposed = first.Data.IsDecomposed;
+            pointSize = first.PointSize;
+            if (i + 1 >= this.glyphs.Count || this.glyphs[i + 1].Offset != offset)
+            {
+                metrics = first.Metrics;
+                return true;
+            }
+
+            List<GlyphMetrics> match = new(first.Metrics);
+            for (i++; i < this.glyphs.Count && this.glyphs[i].Offset == offset; i++)
+            {
+                GlyphPositioningData glyph = this.glyphs[i];
+                isDecomposed = glyph.Data.IsDecomposed;
+                pointSize = glyph.PointSize;
+                match.AddRange(glyph.Metrics);
             }
 
             metrics = match;
-            return match.Count > 0;
+            return true;
+        }
+
+        private int LowerBound(int offset)
+        {
+            int low = 0;
+            int high = this.glyphs.Count;
+            while (low < high)
+            {
+                int mid = (int)((uint)(low + high) >> 1);
+                if (this.glyphs[mid].Offset < offset)
+                {
+                    low = mid + 1;
+                }
+                else
+                {
+                    high = mid;
+                }
+            }
+
+            return low;
+        }
+
+        /// <summary>
+        /// Modified for Agent DVR: gets a value indicating whether the font maps at least one of the characters
+        /// still drawn with a placeholder, i.e. whether trying it as a fallback can change anything.
+        /// </summary>
+        /// <param name="fontMetrics">The fallback font.</param>
+        /// <returns><see langword="true"/> if the font has a glyph for a missing character.</returns>
+        public bool CanFillFallbacks(FontMetrics fontMetrics)
+        {
+            for (int i = 0; i < this.glyphs.Count; i++)
+            {
+                GlyphMetrics m = this.glyphs[i].Metrics[0];
+                if (m.GlyphType == GlyphType.Fallback
+                    && fontMetrics.TryGetGlyphId(m.CodePoint, out ushort glyphId)
+                    && glyphId != 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -242,7 +296,6 @@ namespace SixLabors.Fonts
                 GlyphShapingData data = collection.GetGlyphShapingData(i, out int offset);
                 CodePoint codePoint = data.CodePoint;
                 ushort id = data.GlyphId;
-                List<GlyphMetrics> metrics = new();
 
                 // Perform a semi-deep clone (FontMetrics is not cloned) so we can continue to
                 // cache the original in the font metrics and only update our collection.
@@ -250,19 +303,24 @@ namespace SixLabors.Fonts
                 TextDecorations textDecorations = data.TextRun.TextDecorations;
                 bool isVerticalLayout = AdvancedTypographicUtils.IsVerticalGlyph(codePoint, layoutMode);
 
-                foreach (GlyphMetrics gm in fontMetrics.GetGlyphMetrics(codePoint, id, textAttributes, textDecorations, layoutMode, colorFontSupport))
+                // Modified for Agent DVR: fill the array directly (indexed, so no boxed enumerator) instead
+                // of a temporary list copied out with ToArray.
+                IReadOnlyList<GlyphMetrics> source = fontMetrics.GetGlyphMetrics(codePoint, id, textAttributes, textDecorations, layoutMode, colorFontSupport);
+                int count = source.Count;
+                if (count > 0)
                 {
-                    if (gm.GlyphType == GlyphType.Fallback && !CodePoint.IsControl(codePoint))
+                    GlyphMetrics[] gm = new GlyphMetrics[count];
+                    for (int m = 0; m < count; m++)
                     {
-                        hasFallBacks = true;
+                        GlyphMetrics metric = source[m];
+                        if (metric.GlyphType == GlyphType.Fallback && !CodePoint.IsControl(codePoint))
+                        {
+                            hasFallBacks = true;
+                        }
+
+                        gm[m] = metric.CloneForRendering(data.TextRun, codePoint);
                     }
 
-                    metrics.Add(gm.CloneForRendering(data.TextRun, codePoint));
-                }
-
-                if (metrics.Count > 0)
-                {
-                    GlyphMetrics[] gm = metrics.ToArray();
                     if (isVerticalLayout)
                     {
                         this.glyphs.Add(new(offset, new(data, true) { Bounds = new(0, 0, 0, gm[0].AdvanceHeight) }, font.Size, gm));
@@ -293,8 +351,10 @@ namespace SixLabors.Fonts
             }
 
             ushort glyphId = data.GlyphId;
-            foreach (GlyphMetrics m in this.glyphs[index].Metrics)
+            GlyphMetrics[] metrics = this.glyphs[index].Metrics;
+            for (int i = 0; i < metrics.Length; i++)
             {
+                GlyphMetrics m = metrics[i];
                 if (m.GlyphId == glyphId && fontMetrics == m.FontMetrics)
                 {
                     if (isDirtyXY)

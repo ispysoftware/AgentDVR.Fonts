@@ -68,6 +68,23 @@ namespace SixLabors.Fonts
             => GetBounds(TextLayout.GenerateLayout(text, options), options.Dpi);
 
         /// <summary>
+        /// Measures both the advance and the ink bounds of the text from a single layout - the same values as
+        /// <see cref="MeasureAdvance(ReadOnlySpan{char}, TextOptions)"/> and
+        /// <see cref="MeasureBounds(ReadOnlySpan{char}, TextOptions)"/> for half the work.
+        /// Modified for Agent DVR.
+        /// </summary>
+        /// <param name="text">The text.</param>
+        /// <param name="options">The text shaping options.</param>
+        /// <param name="advance">The advance of the text.</param>
+        /// <param name="bounds">The bounds of the text if it was to be rendered.</param>
+        public static void MeasureAdvanceAndBounds(ReadOnlySpan<char> text, TextOptions options, out FontRectangle advance, out FontRectangle bounds)
+        {
+            IReadOnlyList<GlyphLayout> layout = TextLayout.GenerateLayout(text, options);
+            advance = GetAdvance(layout, options.Dpi);
+            bounds = GetBounds(layout, options.Dpi);
+        }
+
+        /// <summary>
         /// Measures the advance (line-height and horizontal/vertical advance) of each character of the text in pixel units.
         /// </summary>
         /// <param name="text">The text.</param>

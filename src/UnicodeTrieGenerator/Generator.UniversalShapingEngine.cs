@@ -706,7 +706,9 @@ namespace UnicodeTrieGenerator
             if (symbols != null)
             {
                 // Write the categories.
-                writer.WriteLine("        public static string[] Categories => new string[]");
+                // Modified for Agent DVR: built once. The expression-bodied form ("=> new ...") allocated the
+                // table on every access, and it is read per glyph.
+                writer.WriteLine("        public static string[] Categories { get; } = new string[]");
                 writer.WriteLine("        {");
 
                 max = symbols.Count - 1;
@@ -729,7 +731,7 @@ namespace UnicodeTrieGenerator
             // Write the decompositions
             if (decompositions != null)
             {
-                writer.WriteLine("        public static Dictionary<int, int[]> Decompositions => new()");
+                writer.WriteLine("        public static Dictionary<int, int[]> Decompositions { get; } = new()");
                 writer.WriteLine("        {");
 
                 counter = 0;

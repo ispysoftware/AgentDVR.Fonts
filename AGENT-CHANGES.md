@@ -173,3 +173,18 @@ Modified by iSpyConnect / The Playful Group for Agent DVR. Changes from v1.0.1:
   attachment subtracts the advances between base and mark, so in horizontal text every mark from a
   fallback font - Devanagari vowel signs, virama, reph, anusvara - was pushed a whole line down and
   out of the text box.
+- Performance pass (not upstream changes; output is pixel-identical to before):
+  - Build: `LangVersion latest`; the netstandard2.0/netcoreapp polyfills (`HashCode`, `MathF`,
+    nullable attributes, stream/encoding extensions) and the `SUPPORTS_*` conditional code are gone.
+  - Layout: fallback `Font` objects are cached per family/size/style instead of built per call; a
+    fallback font whose cmap covers none of the still-missing glyphs is skipped before shaping. Glyph
+    lookups by code point offset are binary searches. Lines lay out straight into one pre-sized list;
+    all-LTR lines skip building bidi runs. Per-glyph enumerator, closure and temporary-list
+    allocations are removed from positioning.
+  - Shaping: the lookups selected for a LangSys + feature set are cached (they were re-collected and
+    sorted for every run); GDEF glyph class and mark-attachment class are cached per glyph id; the
+    Universal shaper's category/decomposition tables are built once, not per access; shaping stages
+    are a small list instead of a HashSet; a copied glyph no longer allocates its feature list twice.
+  - Rendering: unhinted TrueType glyphs stream their points through one transform instead of
+    building a scaled copy of the outline per size; the per-layout glyph clone shares the outline.
+  - `TextMeasurer.MeasureAdvanceAndBounds`: both measurements from one layout.

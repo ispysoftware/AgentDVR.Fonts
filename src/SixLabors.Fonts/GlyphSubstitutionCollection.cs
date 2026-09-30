@@ -204,22 +204,31 @@ namespace SixLabors.Fonts
         /// </returns>
         public bool TryGetGlyphShapingDataAtOffset(int offset, [NotNullWhen(true)] out IReadOnlyList<GlyphShapingData>? data)
         {
-            List<GlyphShapingData> match = new();
-            for (int i = 0; i < this.glyphs.Count; i++)
+            // Modified for Agent DVR: offsets are sorted, so binary search for the first glyph at the offset
+            // (it scanned from the start for every placeholder).
+            int low = 0;
+            int high = this.glyphs.Count;
+            while (low < high)
             {
-                if (this.glyphs[i].Offset == offset)
+                int mid = (int)((uint)(low + high) >> 1);
+                if (this.glyphs[mid].Offset < offset)
                 {
-                    match.Add(this.glyphs[i].Data);
+                    low = mid + 1;
                 }
-                else if (match.Count > 0)
+                else
                 {
-                    // Offsets, though non-sequential, are sorted, so we can stop searching.
-                    break;
+                    high = mid;
                 }
             }
 
+            List<GlyphShapingData>? match = null;
+            for (int i = low; i < this.glyphs.Count && this.glyphs[i].Offset == offset; i++)
+            {
+                (match ??= new List<GlyphShapingData>(2)).Add(this.glyphs[i].Data);
+            }
+
             data = match;
-            return match.Count > 0;
+            return match is not null;
         }
 
         /// <summary>

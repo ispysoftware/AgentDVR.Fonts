@@ -59,7 +59,10 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
 
         private static readonly CodePoint Slash = new(0x002F);
 
-        private readonly HashSet<ShapingStage> shapingStages = new();
+        // Modified for Agent DVR: a list with a linear duplicate check rather than a HashSet - a shaper is
+        // created per run for both the GSUB and GPOS passes and holds 15-40 stages, where the set's bucket and
+        // entry arrays cost more than the scan. First added wins, and order is insertion order, as before.
+        private readonly List<ShapingStage> shapingStages = new(24);
 
         private readonly KerningMode kerningMode;
 
@@ -198,6 +201,14 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
             for (int i = index; i < end; i++)
             {
                 collection.AddShapingFeature(i, new TagEntry(feature, enabled));
+            }
+
+            for (int i = 0; i < this.shapingStages.Count; i++)
+            {
+                if (this.shapingStages[i].FeatureTag == feature)
+                {
+                    return;
+                }
             }
 
             this.shapingStages.Add(new ShapingStage(feature, preAction, postAction, standalone));

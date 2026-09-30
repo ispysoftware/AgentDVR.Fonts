@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -105,13 +106,23 @@ namespace SixLabors.Fonts
             return textRuns;
         }
 
+        // Modified for Agent DVR: fallback fonts are resolved once per family/size/style and reused. A new Font
+        // was built for every fallback family on every layout, and each looked its face up again through the
+        // family's collection - most of the time spent laying out text that needed fallback.
+        private static readonly ConcurrentDictionary<(FontFamily Family, float Size, FontStyle Style), Font> FallbackFonts = new();
+
+        private static Font GetFallbackFont(FontFamily family, Font primary)
+        {
+            if (FallbackFonts.Count > 1024)
+            {
+                FallbackFonts.Clear();
+            }
+
+            return FallbackFonts.GetOrAdd((family, primary.Size, primary.RequestedStyle), static k => new Font(k.Family, k.Size, k.Style));
+        }
+
         private static TextBox ProcessText(ReadOnlySpan<char> text, TextOptions options)
         {
-            // Gather the font and fallbacks.
-            Font[] fallbackFonts = (options.FallbackFontFamilies?.Count > 0)
-                ? options.FallbackFontFamilies.Select(x => new Font(x, options.Font.Size, options.Font.RequestedStyle)).ToArray()
-                : Array.Empty<Font>();
-
             LayoutMode layoutMode = options.LayoutMode;
             GlyphSubstitutionCollection substitutions = new(options);
             GlyphPositioningCollection positionings = new(options);
@@ -165,12 +176,20 @@ namespace SixLabors.Fonts
             }
 
             List<Font> triedFallbackFonts = new();
-            if (!complete)
+            if (!complete && options.FallbackFontFamilies is { Count: > 0 } fallbackFamilies)
             {
                 // Finally try our fallback fonts.
                 // We do a complete run here across the whole collection.
-                foreach (Font font in fallbackFonts)
+                // Modified for Agent DVR: a fallback font with none of the still-missing characters is skipped
+                // (a cmap lookup) - each one tried shapes the whole text again.
+                foreach (FontFamily family in fallbackFamilies)
                 {
+                    Font font = GetFallbackFont(family, options.Font);
+                    if (!positionings.CanFillFallbacks(font.FontMetrics))
+                    {
+                        continue;
+                    }
+
                     triedFallbackFonts.Add(font);
                     textRunIndex = 0;
                     codePointIndex = 0;
@@ -227,7 +246,16 @@ namespace SixLabors.Fonts
         private static IReadOnlyList<GlyphLayout> LayoutText(TextBox textBox, TextOptions options)
         {
             LayoutMode layoutMode = options.LayoutMode;
-            List<GlyphLayout> glyphs = new();
+
+            // Modified for Agent DVR: the line layouts append straight into one pre-sized list rather than
+            // each building its own list that was then copied across with AddRange.
+            int capacity = 0;
+            for (int i = 0; i < textBox.TextLines.Count; i++)
+            {
+                capacity += textBox.TextLines[i].Count;
+            }
+
+            List<GlyphLayout> glyphs = new(capacity);
 
             Vector2 boxLocation = options.Origin / options.Dpi;
             Vector2 penLocation = boxLocation;
@@ -246,7 +274,8 @@ namespace SixLabors.Fonts
             {
                 for (int i = 0; i < textBox.TextLines.Count; i++)
                 {
-                    glyphs.AddRange(LayoutLineHorizontal(
+                    LayoutLineHorizontal(
+                        glyphs,
                         textBox,
                         textBox.TextLines[i],
                         direction,
@@ -254,7 +283,7 @@ namespace SixLabors.Fonts
                         options,
                         i,
                         ref boxLocation,
-                        ref penLocation));
+                        ref penLocation);
                 }
             }
             else if (layoutMode == LayoutMode.HorizontalBottomTop)
@@ -262,7 +291,8 @@ namespace SixLabors.Fonts
                 int index = 0;
                 for (int i = textBox.TextLines.Count - 1; i >= 0; i--)
                 {
-                    glyphs.AddRange(LayoutLineHorizontal(
+                    LayoutLineHorizontal(
+                        glyphs,
                         textBox,
                         textBox.TextLines[i],
                         direction,
@@ -270,14 +300,15 @@ namespace SixLabors.Fonts
                         options,
                         index++,
                         ref boxLocation,
-                        ref penLocation));
+                        ref penLocation);
                 }
             }
             else if (layoutMode is LayoutMode.VerticalLeftRight)
             {
                 for (int i = 0; i < textBox.TextLines.Count; i++)
                 {
-                    glyphs.AddRange(LayoutLineVertical(
+                    LayoutLineVertical(
+                        glyphs,
                         textBox,
                         textBox.TextLines[i],
                         direction,
@@ -285,7 +316,7 @@ namespace SixLabors.Fonts
                         options,
                         i,
                         ref boxLocation,
-                        ref penLocation));
+                        ref penLocation);
                 }
             }
             else if (layoutMode is LayoutMode.VerticalRightLeft)
@@ -293,7 +324,8 @@ namespace SixLabors.Fonts
                 int index = 0;
                 for (int i = textBox.TextLines.Count - 1; i >= 0; i--)
                 {
-                    glyphs.AddRange(LayoutLineVertical(
+                    LayoutLineVertical(
+                        glyphs,
                         textBox,
                         textBox.TextLines[i],
                         direction,
@@ -301,14 +333,15 @@ namespace SixLabors.Fonts
                         options,
                         index++,
                         ref boxLocation,
-                        ref penLocation));
+                        ref penLocation);
                 }
             }
             else if (layoutMode is LayoutMode.VerticalMixedLeftRight)
             {
                 for (int i = 0; i < textBox.TextLines.Count; i++)
                 {
-                    glyphs.AddRange(LayoutLineVerticalMixed(
+                    LayoutLineVerticalMixed(
+                        glyphs,
                         textBox,
                         textBox.TextLines[i],
                         direction,
@@ -316,7 +349,7 @@ namespace SixLabors.Fonts
                         options,
                         i,
                         ref boxLocation,
-                        ref penLocation));
+                        ref penLocation);
                 }
             }
             else
@@ -324,7 +357,8 @@ namespace SixLabors.Fonts
                 int index = 0;
                 for (int i = textBox.TextLines.Count - 1; i >= 0; i--)
                 {
-                    glyphs.AddRange(LayoutLineVerticalMixed(
+                    LayoutLineVerticalMixed(
+                        glyphs,
                         textBox,
                         textBox.TextLines[i],
                         direction,
@@ -332,14 +366,15 @@ namespace SixLabors.Fonts
                         options,
                         index++,
                         ref boxLocation,
-                        ref penLocation));
+                        ref penLocation);
                 }
             }
 
             return glyphs;
         }
 
-        private static IEnumerable<GlyphLayout> LayoutLineHorizontal(
+        private static void LayoutLineHorizontal(
+            List<GlyphLayout> glyphs,
             TextBox textBox,
             TextLine textLine,
             TextDirection direction,
@@ -422,7 +457,7 @@ namespace SixLabors.Fonts
 
             penLocation.X += offsetX;
 
-            List<GlyphLayout> glyphs = new();
+            int startCount = glyphs.Count;
             for (int i = 0; i < textLine.Count; i++)
             {
                 TextLine.GlyphLayoutData data = textLine[i];
@@ -440,8 +475,10 @@ namespace SixLabors.Fonts
                 // glyph is several layered metrics, and flagging every layer made measuring count each as a
                 // new line (an emoji at the start of a line measured N line-heights tall).
                 bool isStartOfLine = i == 0;
-                foreach (GlyphMetrics metric in data.Metrics)
+                IReadOnlyList<GlyphMetrics> metrics = data.Metrics;
+                for (int m = 0; m < metrics.Count; m++)
                 {
+                    GlyphMetrics metric = metrics[m];
                     glyphs.Add(new GlyphLayout(
                         new Glyph(metric, data.PointSize),
                         boxLocation,
@@ -460,16 +497,15 @@ namespace SixLabors.Fonts
 
             boxLocation.X = originX;
             penLocation.X = originX;
-            if (glyphs.Count > 0)
+            if (glyphs.Count > startCount)
             {
                 penLocation.Y += yLineAdvance;
                 boxLocation.Y += advanceY;
             }
-
-            return glyphs;
         }
 
-        private static IEnumerable<GlyphLayout> LayoutLineVertical(
+        private static void LayoutLineVertical(
+            List<GlyphLayout> glyphs,
             TextBox textBox,
             TextLine textLine,
             TextDirection direction,
@@ -555,7 +591,7 @@ namespace SixLabors.Fonts
 
             penLocation.X += offsetX;
 
-            List<GlyphLayout> glyphs = new();
+            int startCount = glyphs.Count;
             for (int i = 0; i < textLine.Count; i++)
             {
                 TextLine.GlyphLayoutData data = textLine[i];
@@ -571,8 +607,11 @@ namespace SixLabors.Fonts
 
                 // Modified for Agent DVR: only the first layer of a colour glyph starts the line.
                 bool isStartOfLine = i == 0;
-                foreach (GlyphMetrics metric in data.Metrics)
+                IReadOnlyList<GlyphMetrics> metrics = data.Metrics;
+                for (int m = 0; m < metrics.Count; m++)
                 {
+                    GlyphMetrics metric = metrics[m];
+
                     // Align the glyph horizontally and vertically centering horizontally around the baseline.
                     Vector2 scale = new Vector2(data.PointSize) / metric.ScaleFactor;
                     float oX = (data.ScaledLineHeight - (metric.Bounds.Size().X * scale.X)) * .5F;
@@ -595,16 +634,15 @@ namespace SixLabors.Fonts
 
             boxLocation.Y = originY;
             penLocation.Y = originY;
-            if (glyphs.Count > 0)
+            if (glyphs.Count > startCount)
             {
                 boxLocation.X += advanceX;
                 penLocation.X += xLineAdvance;
             }
-
-            return glyphs;
         }
 
-        private static IEnumerable<GlyphLayout> LayoutLineVerticalMixed(
+        private static void LayoutLineVerticalMixed(
+            List<GlyphLayout> glyphs,
             TextBox textBox,
             TextLine textLine,
             TextDirection direction,
@@ -690,7 +728,7 @@ namespace SixLabors.Fonts
 
             penLocation.X += offsetX;
 
-            List<GlyphLayout> glyphs = new();
+            int startCount = glyphs.Count;
             for (int i = 0; i < textLine.Count; i++)
             {
                 TextLine.GlyphLayoutData data = textLine[i];
@@ -706,11 +744,12 @@ namespace SixLabors.Fonts
 
                 // Modified for Agent DVR: only the first layer of a colour glyph starts the line.
                 bool isStartOfLine = i == 0;
+                IReadOnlyList<GlyphMetrics> metrics = data.Metrics;
                 if (data.IsRotated)
                 {
-                    foreach (GlyphMetrics metric in data.Metrics)
+                    for (int m = 0; m < metrics.Count; m++)
                     {
-                        Vector2 scale = new Vector2(data.PointSize) / metric.ScaleFactor;
+                        GlyphMetrics metric = metrics[m];
                         glyphs.Add(new GlyphLayout(
                             new Glyph(metric, data.PointSize),
                             boxLocation,
@@ -725,8 +764,10 @@ namespace SixLabors.Fonts
                 }
                 else
                 {
-                    foreach (GlyphMetrics metric in data.Metrics)
+                    for (int m = 0; m < metrics.Count; m++)
                     {
+                        GlyphMetrics metric = metrics[m];
+
                         // Align the glyph horizontally and vertically centering horizontally around the baseline.
                         Vector2 scale = new Vector2(data.PointSize) / metric.ScaleFactor;
                         float oX = (data.ScaledLineHeight - (metric.Bounds.Size().X * scale.X)) * .5F;
@@ -750,13 +791,11 @@ namespace SixLabors.Fonts
 
             boxLocation.Y = originY;
             penLocation.Y = originY;
-            if (glyphs.Count > 0)
+            if (glyphs.Count > startCount)
             {
                 boxLocation.X += advanceX;
                 penLocation.X += xLineAdvance;
             }
-
-            return glyphs;
         }
 
         private static bool DoFontRun(
@@ -920,7 +959,7 @@ namespace SixLabors.Fonts
             int codePointIndex = 0;
             float lineAdvance = 0;
             List<TextLine> textLines = new();
-            TextLine textLine = new();
+            TextLine textLine = new(positionings.Count);
             int glyphCount = 0;
 
             // No glyph should contain more than 64 metrics.
@@ -1086,7 +1125,7 @@ namespace SixLabors.Fonts
                         {
                             textLines.Add(textLine.Finalize());
                             glyphCount += textLine.Count;
-                            textLine = new();
+                            textLine = new(positionings.Count);
                             lineAdvance = 0;
                             requiredBreak = true;
                         }
@@ -1097,7 +1136,7 @@ namespace SixLabors.Fonts
                             {
                                 textLines.Add(textLine.Finalize());
                                 glyphCount += textLine.Count;
-                                textLine = new();
+                                textLine = new(positionings.Count);
                                 lineAdvance = 0;
                             }
                             else if (currentLineBreak.PositionMeasure == codePointIndex)
@@ -1117,7 +1156,7 @@ namespace SixLabors.Fonts
                                 {
                                     textLines.Add(textLine.Finalize());
                                     glyphCount += textLine.Count;
-                                    textLine = new();
+                                    textLine = new(positionings.Count);
                                     lineAdvance = 0;
                                 }
                             }
@@ -1148,7 +1187,7 @@ namespace SixLabors.Fonts
                                 {
                                     textLines.Add(textLine.Finalize());
                                     glyphCount += textLine.Count;
-                                    textLine = new();
+                                    textLine = new(positionings.Count);
                                     lineAdvance = 0;
                                 }
                             }
@@ -1156,7 +1195,7 @@ namespace SixLabors.Fonts
                             {
                                 textLines.Add(textLine.Finalize());
                                 glyphCount += textLine.Count;
-                                textLine = new();
+                                textLine = new(positionings.Count);
                                 lineAdvance = 0;
                             }
                         }
@@ -1301,7 +1340,15 @@ namespace SixLabors.Fonts
 
         internal sealed class TextLine
         {
-            private readonly List<GlyphLayoutData> data = new();
+            private readonly List<GlyphLayoutData> data;
+
+            public TextLine()
+                => this.data = new List<GlyphLayoutData>();
+
+            // Modified for Agent DVR: sized up front - the entries are large structs, and growing the list from
+            // empty re-copied them several times per line.
+            public TextLine(int capacity)
+                => this.data = new List<GlyphLayoutData>(capacity);
 
             public int Count => this.data.Count;
 
@@ -1521,27 +1568,9 @@ namespace SixLabors.Fonts
 
             private TextLine BidiReOrder()
             {
-                // Build up the collection of ordered runs.
-                BidiRun run = this.data[0].BidiRun;
-                OrderedBidiRun orderedRun = new(run.Level);
-                OrderedBidiRun? current = orderedRun;
-                for (int i = 0; i < this.data.Count; i++)
-                {
-                    GlyphLayoutData g = this.data[i];
-                    if (run != g.BidiRun)
-                    {
-                        run = g.BidiRun;
-                        current.Next = new(run.Level);
-                        current = current.Next;
-                    }
-
-                    current.Add(g);
-                }
-
-                // Reorder them into visual order.
-                orderedRun = LinearReOrder(orderedRun);
-
-                // Now perform a recursive reversal of each run.
+                // Modified for Agent DVR: find the level range first. A line with no odd level (all LTR, the
+                // common case) is already in visual order, so return before building the ordered runs -
+                // the early return below never used them.
                 // From the highest level found in the text to the lowest odd level on each line, including intermediate levels
                 // not actually present in the text, reverse any contiguous sequence of characters that are at that level or higher.
                 // https://unicode.org/reports/tr9/#L2
@@ -1571,6 +1600,26 @@ namespace SixLabors.Fonts
                     // Nothing to reverse.
                     return this;
                 }
+
+                // Build up the collection of ordered runs.
+                BidiRun run = this.data[0].BidiRun;
+                OrderedBidiRun orderedRun = new(run.Level);
+                OrderedBidiRun? current = orderedRun;
+                for (int i = 0; i < this.data.Count; i++)
+                {
+                    GlyphLayoutData g = this.data[i];
+                    if (run != g.BidiRun)
+                    {
+                        run = g.BidiRun;
+                        current.Next = new(run.Level);
+                        current = current.Next;
+                    }
+
+                    current.Add(g);
+                }
+
+                // Reorder them into visual order.
+                orderedRun = LinearReOrder(orderedRun);
 
                 // Now apply the reversal and replace the original contents.
                 int minLevelToReverse = max;

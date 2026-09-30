@@ -21,6 +21,12 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
 
         public FeatureTable[] FeatureTables { get; }
 
+        /// <summary>
+        /// Gets the lookups already collected for a language system and feature set.
+        /// Modified for Agent DVR: see <see cref="AdvancedTypographicUtils.CollectLookups"/>.
+        /// </summary>
+        internal System.Collections.Concurrent.ConcurrentDictionary<(LangSysTable LangSys, int Hash), (Tag[] Features, FeatureLookup[] Lookups)> LookupCache { get; } = new();
+
         public static FeatureListTable Load(BigEndianBinaryReader reader, long offset)
         {
             // FeatureList

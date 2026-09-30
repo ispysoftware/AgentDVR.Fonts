@@ -183,7 +183,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
                 }
 
                 LangSysTable? langSys = AdvancedTypographicUtils.SelectLangSys(this.ScriptList, current);
-                List<FeatureLookup> lookups = AdvancedTypographicUtils.CollectLookups(this.FeatureList, this.LookupList.LookupTables.Length, langSys, features);
+                FeatureLookup[] lookups = AdvancedTypographicUtils.CollectLookups(this.FeatureList, this.LookupList.LookupTables.Length, langSys, features);
                 SkippingGlyphIterator iterator = new(fontMetrics, collection, index, default);
                 foreach (FeatureLookup featureLookup in lookups)
                 {

@@ -61,14 +61,12 @@ namespace SixLabors.Fonts.Native
                 Debug.Assert(CFGetTypeID(fontUrl) == CFURLGetTypeID(), "The elements of the fontUrls array must be a CFURLRef");
                 IntPtr fontPath = CFURLCopyFileSystemPath(fontUrl, CFURLPathStyle.kCFURLPOSIXPathStyle);
 
-#if !NETSTANDARD2_0
                 string? current = Marshal.PtrToStringUTF8(CFStringGetCStringPtr(fontPath, CFStringEncoding.kCFStringEncodingUTF8));
                 if (current is not null)
                 {
                     this.Current = current;
                 }
                 else
-#endif
                 {
                     int fontPathLength = (int)CFStringGetLength(fontPath);
                     int fontPathBufferSize = (fontPathLength + 1) * 2; // +1 for the NULL byte and *2 for UTF-16

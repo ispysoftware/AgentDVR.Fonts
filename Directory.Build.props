@@ -9,12 +9,12 @@
   -->
 
   <PropertyGroup>
-    <LangVersion>9.0</LangVersion>
+    <!-- Same language as Agent (the net10 default). Upstream's netstandard feature switches and their
+         polyfills are gone: the code targets net10.0 only. -->
+    <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <NeutralLanguage>en</NeutralLanguage>
     <DebugType>portable</DebugType>
-    <!-- Upstream's per-framework feature switches, as set for netcoreapp3.1 and later. -->
-    <DefineConstants>$(DefineConstants);SUPPORTS_MATHF;SUPPORTS_HASHCODE;SUPPORTS_EXTENDED_INTRINSICS;SUPPORTS_SPAN_STREAM;SUPPORTS_ENCODING_STRING;SUPPORTS_RUNTIME_INTRINSICS;SUPPORTS_CODECOVERAGE;SUPPORTS_HOTPATH;SUPPORTS_CREATESPAN;SUPPORTS_BITOPERATIONS;NULLABLE_ATTRIBUTES</DefineConstants>
   </PropertyGroup>
 
 </Project>

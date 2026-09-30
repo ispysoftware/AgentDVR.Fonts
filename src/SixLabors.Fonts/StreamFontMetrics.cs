@@ -31,6 +31,8 @@ namespace SixLabors.Fonts
         private readonly TrueTypeFontTables? trueTypeFontTables;
         private readonly CompactFontTables? compactFontTables;
         private readonly OutlineType outlineType;
+        private readonly object glyphClassInfoLock = new();
+        private ushort[]? glyphClassInfo;
 
         // https://docs.microsoft.com/en-us/typography/opentype/spec/otff#font-tables
         private readonly ConcurrentDictionary<(ushort Id, TextAttributes Attributes, bool IsVerticalLayout), GlyphMetrics[]> glyphCache;
@@ -187,6 +189,66 @@ namespace SixLabors.Fonts
         }
 
         /// <inheritdoc/>
+        internal override bool TryGetGlyphClassInfo(ushort glyphId, out GlyphClassDef glyphClass, out ushort markAttachmentClass)
+        {
+            GlyphDefinitionTable? gdef = this.outlineType == OutlineType.TrueType
+                ? this.trueTypeFontTables!.Gdef
+                : this.compactFontTables!.Gdef;
+
+            if (gdef?.GlyphClassDefinition is null)
+            {
+                glyphClass = default;
+                markAttachmentClass = 0;
+                return false;
+            }
+
+            ushort[]? info = this.glyphClassInfo;
+            if (info is null || glyphId >= info.Length)
+            {
+                info = this.GrowGlyphClassInfo(glyphId);
+            }
+
+            int value = info[glyphId];
+            if (value == 0)
+            {
+                int cls = gdef.GlyphClassDefinition.ClassIndexOf(glyphId) & 0xF;
+                int mark = (gdef.MarkAttachmentClassDef?.ClassIndexOf(glyphId) ?? 0) & 0xFFF;
+                value = ((mark << 4) | cls) + 1;
+                info[glyphId] = (ushort)value; // racing writers store the same value
+            }
+
+            value--;
+            glyphClass = (GlyphClassDef)(value & 0xF);
+            markAttachmentClass = (ushort)(value >> 4);
+            return true;
+        }
+
+        // Modified for Agent DVR: GDEF glyph and mark-attachment classes are looked up once per glyph id (class
+        // definition tables are binary searched) and kept here, 0 meaning "not looked up yet". Grown on demand
+        // so fonts only pay for the glyph ids they use.
+        private ushort[] GrowGlyphClassInfo(int glyphId)
+        {
+            lock (this.glyphClassInfoLock)
+            {
+                ushort[]? info = this.glyphClassInfo;
+                if (info is not null && glyphId < info.Length)
+                {
+                    return info;
+                }
+
+                int size = Math.Max(256, (int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)glyphId + 1));
+                ushort[] grown = new ushort[Math.Min(size, 65536)];
+                if (info is not null)
+                {
+                    Array.Copy(info, grown, info.Length);
+                }
+
+                this.glyphClassInfo = grown;
+                return grown;
+            }
+        }
+
+        /// <inheritdoc/>
         internal override bool IsInMarkGlyphSet(ushort markGlyphSet, ushort glyphId)
         {
             GlyphDefinitionTable? gdef = this.outlineType == OutlineType.TrueType
@@ -234,9 +296,26 @@ namespace SixLabors.Fonts
                 return metrics;
             }
 
+            // Modified for Agent DVR: look up first, and create on a miss in a separate method - the GetOrAdd
+            // factory closes over the parameters, so its closure was allocated on every call, cache hit or not.
+            (ushort Id, TextAttributes Attributes, bool IsVerticalLayout) cacheKey = CreateCacheKey(codePoint, glyphId, textAttributes, layoutMode);
+            if (this.glyphCache.TryGetValue(cacheKey, out GlyphMetrics[]? cached))
+            {
+                return cached;
+            }
+
+            return this.AddGlyphMetrics(cacheKey, codePoint, glyphType, textDecorations);
+        }
+
+        private GlyphMetrics[] AddGlyphMetrics(
+            (ushort Id, TextAttributes Attributes, bool IsVerticalLayout) cacheKey,
+            CodePoint codePoint,
+            GlyphType glyphType,
+            TextDecorations textDecorations)
+        {
             // We overwrite the cache entry for this type should the attributes change.
             return this.glyphCache.GetOrAdd(
-                  CreateCacheKey(codePoint, glyphId, textAttributes, layoutMode),
+                  cacheKey,
                   key => new[]
                   {
                     this.CreateGlyphMetrics(

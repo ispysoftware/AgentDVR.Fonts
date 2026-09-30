@@ -219,14 +219,63 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
         /// <param name="langSys">The selected language system.</param>
         /// <param name="features">The features.</param>
         /// <returns>The lookups, sorted by index.</returns>
-        public static List<FeatureLookup> CollectLookups(FeatureListTable featureList, int lookupCount, LangSysTable? langSys, IReadOnlyList<Tag> features)
+        public static FeatureLookup[] CollectLookups(FeatureListTable featureList, int lookupCount, LangSysTable? langSys, IReadOnlyList<Tag> features)
         {
-            List<FeatureLookup> lookups = new();
             if (langSys is null || features.Count == 0)
             {
-                return lookups;
+                return Array.Empty<FeatureLookup>();
             }
 
+            // The same shaper asks for the same feature groups on every run of every layout, so the result is
+            // cached per language system and feature list (checked tag by tag, so a hash collision only misses).
+            int hash = 17;
+            for (int i = 0; i < features.Count; i++)
+            {
+                hash = unchecked((hash * 31) + (int)features[i].Value);
+            }
+
+            if (featureList.LookupCache.TryGetValue((langSys, hash), out (Tag[] Features, FeatureLookup[] Lookups) cached)
+                && SameFeatures(cached.Features, features))
+            {
+                return cached.Lookups;
+            }
+
+            FeatureLookup[] result = CollectLookupsUncached(featureList, lookupCount, langSys, features);
+            if (featureList.LookupCache.Count < 256)
+            {
+                Tag[] key = new Tag[features.Count];
+                for (int i = 0; i < key.Length; i++)
+                {
+                    key[i] = features[i];
+                }
+
+                featureList.LookupCache.TryAdd((langSys, hash), (key, result));
+            }
+
+            return result;
+        }
+
+        private static bool SameFeatures(Tag[] cached, IReadOnlyList<Tag> features)
+        {
+            if (cached.Length != features.Count)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < cached.Length; i++)
+            {
+                if (cached[i] != features[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static FeatureLookup[] CollectLookupsUncached(FeatureListTable featureList, int lookupCount, LangSysTable langSys, IReadOnlyList<Tag> features)
+        {
+            List<FeatureLookup> lookups = new();
             Dictionary<ushort, FeatureLookup>? byIndex = null;
             foreach (ushort featureIndex in langSys.FeatureIndices)
             {
@@ -271,7 +320,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
             }
 
             lookups.Sort((x, y) => x.LookupIndex.CompareTo(y.LookupIndex));
-            return lookups;
+            return lookups.ToArray();
         }
 
         /// <summary>
@@ -673,15 +722,15 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
             bool isBase;
             bool isLigature;
             ushort markAttachmentType = 0;
-            if (fontMetrics.TryGetGlyphClass(glyphId, out GlyphClassDef? glyphClass))
+
+            // Modified for Agent DVR: one cached lookup per glyph id (see TryGetGlyphClassInfo); the class
+            // tables were binary searched on every iterator step.
+            if (fontMetrics.TryGetGlyphClassInfo(glyphId, out GlyphClassDef glyphClass, out ushort markAttachmentClass))
             {
                 isMark = glyphClass == GlyphClassDef.MarkGlyph;
                 isBase = glyphClass == GlyphClassDef.BaseGlyph;
                 isLigature = glyphClass == GlyphClassDef.LigatureGlyph;
-                if (fontMetrics.TryGetMarkAttachmentClass(glyphId, out GlyphClassDef? markAttachmentClass))
-                {
-                    markAttachmentType = (ushort)markAttachmentClass;
-                }
+                markAttachmentType = markAttachmentClass;
             }
             else
             {

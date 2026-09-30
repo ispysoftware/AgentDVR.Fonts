@@ -122,6 +122,10 @@ namespace SixLabors.Fonts
         internal override bool IsInMarkGlyphSet(ushort markGlyphSet, ushort glyphId)
             => this.fontMetrics.Value.IsInMarkGlyphSet(markGlyphSet, glyphId);
 
+        /// <inheritdoc/>
+        internal override bool TryGetGlyphClassInfo(ushort glyphId, out GlyphClassDef glyphClass, out ushort markAttachmentClass)
+            => this.fontMetrics.Value.TryGetGlyphClassInfo(glyphId, out glyphClass, out markAttachmentClass);
+
         /// <inheritdoc />
         public override bool TryGetGlyphMetrics(
             CodePoint codePoint,
