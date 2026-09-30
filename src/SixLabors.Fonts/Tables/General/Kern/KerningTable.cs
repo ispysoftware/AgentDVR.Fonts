@@ -42,6 +42,12 @@ namespace SixLabors.Fonts.Tables.General.Kern
             // | uint16 | nTables | Number of subtables in the kerning table. |
             // +--------+---------+-------------------------------------------+
             ushort version = reader.ReadUInt16();
+            if (version != 0)
+            {
+                // Apple's version 1.0 'kern' has a different header; not supported (as before, but explicitly).
+                return new KerningTable(Array.Empty<KerningSubTable>());
+            }
+
             ushort subTableCount = reader.ReadUInt16();
 
             var tables = new List<KerningSubTable>(subTableCount);
@@ -67,9 +73,11 @@ namespace SixLabors.Fonts.Tables.General.Kern
             ushort previous = collection[left].GlyphId;
             ushort current = collection[right].GlyphId;
 
+            // Modified for Agent DVR: a kern pair value adjusts the space between the two glyphs, so it goes on
+            // the left glyph's advance. It was added to the right glyph, moving the gap one glyph late.
             if (this.TryGetKerningOffset(previous, current, out Vector2 result))
             {
-                collection.Advance(fontMetrics, right, current, (short)result.X, (short)result.Y);
+                collection.Advance(fontMetrics, left, previous, (short)result.X, (short)result.Y);
             }
         }
 

@@ -1,6 +1,7 @@
 // Copyright (c) Six Labors.
 // Licensed under the Apache License, Version 2.0.
 
+using System.IO;
 using System.Numerics;
 
 namespace SixLabors.Fonts.Tables.General.Kern
@@ -25,18 +26,22 @@ namespace SixLabors.Fonts.Tables.General.Kern
             // +--------+----------+----------------------------------------------------------+
             // | uint16 | coverage | What type of information is contained in this table.     |
             // +--------+----------+----------------------------------------------------------+
+            long start = reader.BaseStream.Position;
             ushort subVersion = reader.ReadUInt16();
             ushort length = reader.ReadUInt16();
             var coverage = KerningCoverage.Read(reader);
             if (coverage.Format == 0)
             {
+                // Format 0 reads exactly its pairs. Its 16-bit length is ignored, as Windows and HarfBuzz
+                // do: it wraps for subtables over 64KB.
                 return Format0SubTable.Load(reader, coverage);
             }
-            else
-            {
-                // we don't support versions other than 'Format 0' same as Windows
-                return null;
-            }
+
+            // We don't support formats other than 0, same as Windows. Modified for Agent DVR: skip the
+            // subtable by its length - it used to stop mid-subtable, so every following subtable header was
+            // read from the wrong place.
+            reader.BaseStream.Seek(start + length, SeekOrigin.Begin);
+            return null;
         }
 
         protected abstract bool TryGetOffset(ushort index1, ushort index2, out short offset);

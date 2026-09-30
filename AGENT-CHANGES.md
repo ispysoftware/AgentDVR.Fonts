@@ -34,3 +34,11 @@ Modified by iSpyConnect / The Playful Group for Agent DVR. Changes from v1.0.1:
 - System font enumeration walks the font directories itself: an unreadable folder or a symlink
   loop is skipped instead of failing `SystemFonts` for the whole process (the lazy AllDirectories
   enumeration threw outside the per-font try/catch). `.otc` collections are included.
+- `hmtx`/`vmtx`: glyphs past numberOfH/VMetrics take the last record's advance, per the spec (they
+  got glyph 0's - wrong widths throughout CJK and pan-Unicode fonts); ids past the glyph count get
+  0; a metric count above the glyph count no longer overruns. The `vmtx` reader is disposed.
+- Legacy `kern`: the pair value goes on the left glyph's advance (it went on the right glyph, so
+  the gap moved one glyph late); unsupported subtable formats are skipped by their length instead
+  of desynchronising every later subtable; Apple version-1 tables are explicitly ignored.
+- cmap format 4: binary search over the (sorted) segments; idDelta applied in the idRangeOffset
+  branch; the glyph array index is bounds-checked; glyph 0 is reported as not found.

@@ -25,32 +25,62 @@ namespace SixLabors.Fonts.Tables.General.CMap
 
         public ushort Language { get; }
 
+        // Modified for Agent DVR, per the spec:
+        // - segments are sorted by end code, so binary search instead of scanning them all per character;
+        // - in the idRangeOffset branch idDelta is added to a non-zero glyphIdArray value (it was dropped),
+        //   and the array index is bounds-checked (it could throw);
+        // - glyph 0 is "missing" in both branches, so it is reported as not found.
         public override bool TryGetGlyphId(CodePoint codePoint, out ushort glyphId)
         {
-            int charAsInt = codePoint.Value;
+            glyphId = 0;
+            int c = codePoint.Value;
+            Segment[] segments = this.Segments;
 
-            for (int i = 0; i < this.Segments.Length; i++)
+            int lo = 0;
+            int hi = segments.Length - 1;
+            while (lo < hi)
             {
-                ref Segment seg = ref this.Segments[i];
-
-                if (seg.End >= charAsInt && seg.Start <= charAsInt)
+                int mid = (lo + hi) >> 1;
+                if (segments[mid].End < c)
                 {
-                    if (seg.Offset == 0)
-                    {
-                        glyphId = (ushort)((charAsInt + seg.Delta) & ushort.MaxValue);
-                        return true;
-                    }
-                    else
-                    {
-                        long offset = (seg.Offset / 2) + (charAsInt - seg.Start);
-                        glyphId = this.GlyphIds[offset - this.Segments.Length + seg.Index];
-                        return true;
-                    }
+                    lo = mid + 1;
+                }
+                else
+                {
+                    hi = mid;
                 }
             }
 
-            glyphId = 0;
-            return false;
+            if (segments.Length == 0 || segments[lo].End < c || segments[lo].Start > c)
+            {
+                return false;
+            }
+
+            ref Segment seg = ref segments[lo];
+            int gid;
+            if (seg.Offset == 0)
+            {
+                gid = c + seg.Delta;
+            }
+            else
+            {
+                long idx = (seg.Offset / 2) + (c - seg.Start) - segments.Length + seg.Index;
+                if ((ulong)idx >= (ulong)this.GlyphIds.Length)
+                {
+                    return false;
+                }
+
+                gid = this.GlyphIds[idx];
+                if (gid == 0)
+                {
+                    return false;
+                }
+
+                gid += seg.Delta;
+            }
+
+            glyphId = (ushort)(gid & ushort.MaxValue);
+            return glyphId != 0;
         }
 
         public override IEnumerable<int> GetAvailableCodePoints()
@@ -103,7 +133,8 @@ namespace SixLabors.Fonts.Tables.General.CMap
 
             // table length thus far
             int headerLength = 16 + (segCount * 8);
-            int glyphIdCount = (length - headerLength) / 2;
+            // Modified for Agent DVR: a malformed length shorter than the header no longer gives a negative count.
+            int glyphIdCount = Math.Max(0, (length - headerLength) / 2);
 
             ushort[] glyphIds = reader.ReadUInt16Array(glyphIdCount);
 
