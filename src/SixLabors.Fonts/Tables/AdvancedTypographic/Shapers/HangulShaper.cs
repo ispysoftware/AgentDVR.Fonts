@@ -85,7 +85,13 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
         /// <inheritdoc/>
         protected override void AssignFeatures(IGlyphShapingCollection collection, int index, int count)
         {
-            for (int i = index; i < count; i++)
+            // Modified for Agent DVR: indices are absolute and the run ends at index + count, growing or
+            // shrinking as syllables are (de)composed. The loops ran to count rather than index + count, and
+            // the GSUB helpers - which index the collection directly - were given run-relative positions, so a
+            // Hangul run that didn't start the text (e.g. "Cam 1 한국") composed, decomposed and reordered
+            // the wrong glyphs, and the GPOS jamo features were enabled on the wrong glyphs.
+            int end = Math.Min(index + count, collection.Count);
+            for (int i = index; i < end; i++)
             {
                 // Uniscribe does not apply 'calt' for Hangul, and certain fonts
                 // (Noto Sans CJK, Source Sans Han, etc) apply all of jamo lookups
@@ -98,14 +104,10 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
             {
                 // GSub
                 int state = 0;
-                for (int i = 0; i < count; i++)
+                for (int i = index; i < end && i < substitutionCollection.Count; i++)
                 {
-                    if (i + index >= substitutionCollection.Count)
-                    {
-                        break;
-                    }
-
-                    GlyphShapingData data = substitutionCollection[i + index];
+                    int before = substitutionCollection.Count;
+                    GlyphShapingData data = substitutionCollection[i];
                     CodePoint codePoint = data.CodePoint;
                     int type = GetSyllableType(codePoint);
                     byte[] actionsWithState = StateTable[state, type];
@@ -126,13 +128,13 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
                         case Compose:
 
                             // Found a decomposed syllable. Try to compose if supported by the font.
-                            i = this.ComposeGlyph(substitutionCollection, data, i, type);
+                            i = this.ComposeGlyph(substitutionCollection, data, i, type, index);
                             break;
 
                         case ToneMark:
 
                             // Got a valid syllable, followed by a tone mark. Move the tone mark to the beginning of the syllable.
-                            this.ReOrderToneMark(substitutionCollection, data, i);
+                            this.ReOrderToneMark(substitutionCollection, data, i, index);
                             break;
 
                         case Invalid:
@@ -141,6 +143,8 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
                             i = this.InsertDottedCircle(substitutionCollection, data, i);
                             break;
                     }
+
+                    end += substitutionCollection.Count - before;
                 }
             }
             else
@@ -148,14 +152,9 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
                 // GPos
                 // Simply loop and enable based on type.
                 // Glyph substitution has handled [de]composition.
-                for (int i = 0; i < count; i++)
+                for (int i = index; i < end; i++)
                 {
-                    if (i + index >= collection.Count)
-                    {
-                        break;
-                    }
-
-                    GlyphShapingData data = collection[i + index];
+                    GlyphShapingData data = collection[i];
                     CodePoint codePoint = data.CodePoint;
                     switch (GetSyllableType(codePoint))
                     {
@@ -257,9 +256,9 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
             return index + 2;
         }
 
-        private int ComposeGlyph(GlyphSubstitutionCollection collection, GlyphShapingData data, int index, int type)
+        private int ComposeGlyph(GlyphSubstitutionCollection collection, GlyphShapingData data, int index, int type, int runStart)
         {
-            if (index == 0)
+            if (index == runStart)
             {
                 return index;
             }
@@ -351,9 +350,9 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
             return index;
         }
 
-        private void ReOrderToneMark(GlyphSubstitutionCollection collection, GlyphShapingData data, int index)
+        private void ReOrderToneMark(GlyphSubstitutionCollection collection, GlyphShapingData data, int index, int runStart)
         {
-            if (index == 0)
+            if (index == runStart)
             {
                 return;
             }
@@ -378,7 +377,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
 
             GlyphShapingData prev = collection[index - 1];
             int len = GetSyllableLength(prev.CodePoint);
-            collection.MoveGlyph(index, index - len);
+            collection.MoveGlyph(index, Math.Max(runStart, index - len));
         }
 
         private int InsertDottedCircle(GlyphSubstitutionCollection collection, GlyphShapingData data, int index)

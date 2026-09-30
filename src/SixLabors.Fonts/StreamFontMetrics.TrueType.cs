@@ -3,6 +3,7 @@
 
 using System;
 using System.Numerics;
+using System.Threading;
 using SixLabors.Fonts.Tables.AdvancedTypographic;
 using SixLabors.Fonts.Tables.General;
 using SixLabors.Fonts.Tables.General.Colr;
@@ -21,8 +22,11 @@ namespace SixLabors.Fonts
     /// </content>
     internal partial class StreamFontMetrics
     {
-        [ThreadStatic]
-        private TrueTypeInterpreter? interpreter;
+        // Modified for Agent DVR: one hinting interpreter per font per thread. This was an instance field marked
+        // [ThreadStatic], which the runtime ignores on instance fields, so threads hinting the same font
+        // shared - and corrupted - one interpreter's stack, storage and control values. Created on first
+        // use, so fonts that are never hinted don't pay for it.
+        private ThreadLocal<TrueTypeInterpreter>? interpreters;
 
         internal void ApplyTrueTypeHinting(HintingMode hintingMode, GlyphMetrics metrics, ref GlyphVector glyphVector, Vector2 scaleXY, float pixelSize)
         {
@@ -32,27 +36,15 @@ namespace SixLabors.Fonts
             }
 
             TrueTypeFontTables tables = this.trueTypeFontTables!;
-            if (this.interpreter == null)
-            {
-                MaximumProfileTable maxp = tables.Maxp;
-                this.interpreter = new TrueTypeInterpreter(
-                    maxp.MaxStackElements,
-                    maxp.MaxStorage,
-                    maxp.MaxFunctionDefs,
-                    maxp.MaxInstructionDefs,
-                    maxp.MaxTwilightPoints);
-
-                FpgmTable? fpgm = tables.Fpgm;
-                if (fpgm is not null)
-                {
-                    this.interpreter.InitializeFunctionDefs(fpgm.Instructions);
-                }
-            }
+            ThreadLocal<TrueTypeInterpreter> interpreters = this.interpreters
+                ?? Interlocked.CompareExchange(ref this.interpreters, new ThreadLocal<TrueTypeInterpreter>(() => CreateInterpreter(tables)), null)
+                ?? this.interpreters!;
+            TrueTypeInterpreter interpreter = interpreters.Value!;
 
             CvtTable? cvt = tables.Cvt;
             PrepTable? prep = tables.Prep;
             float scaleFactor = pixelSize / this.UnitsPerEm;
-            this.interpreter.SetControlValueTable(cvt?.ControlValues, scaleFactor, pixelSize, prep?.Instructions);
+            interpreter.SetControlValueTable(cvt?.ControlValues, scaleFactor, pixelSize, prep?.Instructions);
 
             Bounds bounds = glyphVector.Bounds;
 
@@ -61,7 +53,26 @@ namespace SixLabors.Fonts
             Vector2 pp3 = new(0, MathF.Round(bounds.Max.Y + (metrics.TopSideBearing * scaleXY.Y)));
             Vector2 pp4 = new(0, MathF.Round(pp3.Y - (metrics.AdvanceHeight * scaleXY.Y)));
 
-            GlyphVector.Hint(hintingMode, ref glyphVector, this.interpreter, pp1, pp2, pp3, pp4);
+            GlyphVector.Hint(hintingMode, ref glyphVector, interpreter, pp1, pp2, pp3, pp4);
+        }
+
+        private static TrueTypeInterpreter CreateInterpreter(TrueTypeFontTables tables)
+        {
+            MaximumProfileTable maxp = tables.Maxp;
+            TrueTypeInterpreter interpreter = new(
+                maxp.MaxStackElements,
+                maxp.MaxStorage,
+                maxp.MaxFunctionDefs,
+                maxp.MaxInstructionDefs,
+                maxp.MaxTwilightPoints);
+
+            FpgmTable? fpgm = tables.Fpgm;
+            if (fpgm is not null)
+            {
+                interpreter.InitializeFunctionDefs(fpgm.Instructions);
+            }
+
+            return interpreter;
         }
 
         private static StreamFontMetrics LoadTrueTypeFont(FontReader reader)

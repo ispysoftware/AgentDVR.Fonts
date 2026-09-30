@@ -153,6 +153,17 @@ namespace SixLabors.Fonts
         /// <returns><see langword="true"/> if the font has a glyph for a missing character.</returns>
         public bool CanFillFallbacks(FontMetrics fontMetrics)
         {
+            if (this.pendingClusters is not null)
+            {
+                foreach (PendingCluster cluster in this.pendingClusters)
+                {
+                    if (CoversAll(fontMetrics, cluster.CodePoints))
+                    {
+                        return true;
+                    }
+                }
+            }
+
             for (int i = 0; i < this.glyphs.Count; i++)
             {
                 GlyphMetrics m = this.glyphs[i].Metrics[0];
@@ -167,6 +178,162 @@ namespace SixLabors.Fonts
             return false;
         }
 
+        // Modified for Agent DVR: fallback fonts are chosen per grapheme cluster, as browsers do. A cluster with a
+        // character the primary font lacks is drawn entirely by the first fallback font that has every visible
+        // character in it, so sequences stay in one font and can form their ligature: ZWJ emoji (🏃‍♀️ took ♀
+        // from the primary font and 🏃 from the emoji font), keycaps (1️⃣), skin tones, a base letter with a
+        // mark the primary font lacks. Until such a font is found, fonts still fill the individual missing
+        // glyphs, so a cluster no single font covers is drawn as well as it was before.
+        private List<PendingCluster>? pendingClusters;
+
+        /// <summary>
+        /// Records the grapheme clusters that still have a missing visible character after the text runs' own
+        /// fonts, before fallback fonts are tried. Modified for Agent DVR.
+        /// </summary>
+        /// <param name="text">The text being laid out.</param>
+        public void BeginFallback(ReadOnlySpan<char> text)
+        {
+            List<PendingCluster>? pending = null;
+            SpanGraphemeEnumerator graphemes = new(text);
+            int start = 0;
+            while (graphemes.MoveNext())
+            {
+                ReadOnlySpan<char> grapheme = graphemes.Current;
+                int end = start + CodePoint.GetCodePointCount(grapheme);
+                if (this.HasMissingVisible(start, end))
+                {
+                    List<int> codePoints = new(end - start);
+                    SpanCodePointEnumerator e = new(grapheme);
+                    while (e.MoveNext())
+                    {
+                        if (!IsInvisible(e.Current))
+                        {
+                            codePoints.Add(e.Current.Value);
+                        }
+                    }
+
+                    (pending ??= new()).Add(new PendingCluster(start, end, codePoints.ToArray()));
+                }
+
+                start = end;
+            }
+
+            this.pendingClusters = pending;
+        }
+
+        private bool HasMissingVisible(int start, int end)
+        {
+            for (int i = this.LowerBound(start); i < this.glyphs.Count && this.glyphs[i].Offset < end; i++)
+            {
+                GlyphMetrics m = this.glyphs[i].Metrics[0];
+                if (m.GlyphType == GlyphType.Fallback && !IsInvisible(m.CodePoint))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // Default-ignorables (ZWJ, variation selectors...) and controls draw nothing, so a font need not have them.
+        private static bool IsInvisible(CodePoint codePoint)
+            => CodePoint.IsControl(codePoint) || UnicodeUtility.IsDefaultIgnorableCodePoint((uint)codePoint.Value);
+
+        private static bool CoversAll(FontMetrics fontMetrics, int[] codePoints)
+        {
+            foreach (int codePoint in codePoints)
+            {
+                if (!fontMetrics.TryGetGlyphId(new CodePoint(codePoint), out ushort glyphId) || glyphId == 0)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Replaces every glyph of a pending cluster with the font's, if the font drew all its visible characters.
+        /// </summary>
+        private bool TryReplaceCluster(Font font, GlyphSubstitutionCollection collection, PendingCluster cluster)
+        {
+            // The font's shaped glyphs for the cluster; ligated components have no glyph at their offset.
+            List<(int Offset, GlyphShapingData Data)> shaped = new(cluster.End - cluster.Start);
+            for (int offset = cluster.Start; offset < cluster.End; offset++)
+            {
+                if (!collection.TryGetGlyphShapingDataAtOffset(offset, out IReadOnlyList<GlyphShapingData>? data))
+                {
+                    continue;
+                }
+
+                for (int j = 0; j < data.Count; j++)
+                {
+                    GlyphShapingData shape = data[j];
+                    if (shape.GlyphId == 0)
+                    {
+                        if (!IsInvisible(shape.CodePoint))
+                        {
+                            return false;
+                        }
+
+                        // An invisible character the font lacks is left out rather than drawn as its .notdef.
+                        continue;
+                    }
+
+                    shaped.Add((offset, shape));
+                }
+            }
+
+            if (shaped.Count == 0)
+            {
+                return false;
+            }
+
+            FontMetrics fontMetrics = font.FontMetrics;
+            LayoutMode layoutMode = this.TextOptions.LayoutMode;
+            ColorFontSupport colorFontSupport = this.TextOptions.ColorFontSupport;
+            List<GlyphPositioningData> replacement = new(shaped.Count);
+            foreach ((int offset, GlyphShapingData shape) in shaped)
+            {
+                CodePoint codePoint = shape.CodePoint;
+                IReadOnlyList<GlyphMetrics> source = fontMetrics.GetGlyphMetrics(
+                    codePoint,
+                    shape.GlyphId,
+                    shape.TextRun.TextAttributes,
+                    shape.TextRun.TextDecorations,
+                    layoutMode,
+                    colorFontSupport);
+
+                if (source.Count == 0)
+                {
+                    return false;
+                }
+
+                GlyphMetrics[] metrics = new GlyphMetrics[source.Count];
+                ushort maxAdvancedWidth = 0;
+                ushort maxAdvancedHeight = 0;
+                for (int k = 0; k < metrics.Length; k++)
+                {
+                    metrics[k] = source[k].CloneForRendering(shape.TextRun, codePoint);
+                    maxAdvancedWidth = Math.Max(maxAdvancedWidth, metrics[k].AdvanceWidth);
+                    maxAdvancedHeight = Math.Max(maxAdvancedHeight, metrics[k].AdvanceHeight);
+                }
+
+                GlyphShapingBounds bounds = AdvancedTypographicUtils.IsVerticalGlyph(codePoint, layoutMode)
+                    ? new(0, 0, 0, maxAdvancedHeight)
+                    : new(0, 0, maxAdvancedWidth, 0);
+                replacement.Add(new(offset, new(shape, true) { Bounds = bounds }, font.Size, metrics));
+            }
+
+            int first = this.LowerBound(cluster.Start);
+            int last = this.LowerBound(cluster.End);
+            this.glyphs.RemoveRange(first, last - first);
+            this.glyphs.InsertRange(first, replacement);
+            return true;
+        }
+
+        private readonly record struct PendingCluster(int Start, int End, int[] CodePoints);
+
         /// <summary>
         /// Updates the collection of glyph ids to the metrics collection to overwrite any glyphs that have been previously
         /// identified as fallbacks.
@@ -176,6 +343,12 @@ namespace SixLabors.Fonts
         /// <returns><see langword="true"/> if the metrics collection does not contain any fallbacks; otherwise <see langword="false"/>.</returns>
         public bool TryUpdate(Font font, GlyphSubstitutionCollection collection)
         {
+            // Modified for Agent DVR: whole clusters first; then any placeholders left, glyph by glyph.
+            if (this.pendingClusters is { Count: > 0 } pending)
+            {
+                pending.RemoveAll(cluster => this.TryReplaceCluster(font, collection, cluster));
+            }
+
             FontMetrics fontMetrics = font.FontMetrics;
             LayoutMode layoutMode = this.TextOptions.LayoutMode;
             ColorFontSupport colorFontSupport = this.TextOptions.ColorFontSupport;
@@ -274,7 +447,7 @@ namespace SixLabors.Fonts
                 this.glyphs.RemoveAt(orphans[i]);
             }
 
-            return !hasFallBacks;
+            return !hasFallBacks && this.pendingClusters is not { Count: > 0 };
         }
 
         /// <summary>

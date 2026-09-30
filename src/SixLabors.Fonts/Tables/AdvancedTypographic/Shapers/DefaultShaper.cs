@@ -92,9 +92,11 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
             this.AddFeature(collection, index, count, RvnrTag, standalone: true);
 
             // Add directional features.
+            // Modified for Agent DVR: the run is [index, index + count) - the loop stopped at count, so a run
+            // that didn't start the text got no direction features (e.g. no 'rtlm' mirrored forms).
             LayoutMode layoutMode = collection.TextOptions.LayoutMode;
             bool isVerticalLayout = false;
-            for (int i = index; i < count; i++)
+            for (int i = index; i < index + count; i++)
             {
                 GlyphShapingData shapingData = collection[i];
                 isVerticalLayout |= AdvancedTypographicUtils.IsVerticalGlyph(shapingData.CodePoint, layoutMode);
@@ -124,9 +126,11 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
             this.AddFeature(collection, index, count, MarkTag);
             this.AddFeature(collection, index, count, MkmkTag);
 
+            // Modified for Agent DVR: [index, index + count), as above - vertical runs that didn't start the
+            // text got the horizontal features.
             LayoutMode layoutMode = collection.TextOptions.LayoutMode;
             bool isVerticalLayout = false;
-            for (int i = index; i < count; i++)
+            for (int i = index; i < index + count; i++)
             {
                 GlyphShapingData shapingData = collection[i];
                 isVerticalLayout |= AdvancedTypographicUtils.IsVerticalGlyph(shapingData.CodePoint, layoutMode);

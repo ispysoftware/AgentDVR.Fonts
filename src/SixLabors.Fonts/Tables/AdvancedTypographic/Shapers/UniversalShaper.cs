@@ -93,9 +93,11 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
                 return;
             }
 
+            // Modified for Agent DVR: only this run's glyphs - the loop ran down to 0, re-decomposing split
+            // vowels in earlier runs after their lookups had been applied, and shifting this run's start.
             Span<ushort> buffer = stackalloc ushort[16];
             int end = index + count;
-            for (int i = end - 1; i >= 0; i--)
+            for (int i = end - 1; i >= index; i--)
             {
                 GlyphShapingData data = substitutionCollection[i];
                 FontMetrics fontMetrics = this.fontMetrics;

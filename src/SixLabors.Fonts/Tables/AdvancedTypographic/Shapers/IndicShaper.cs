@@ -101,6 +101,20 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
             this.AddFeature(collection, index, count, BlwmTag);
         }
 
+        /// <summary>
+        /// Modified for Agent DVR: 'liga' is off for Indic (and Khmer) runs, as in HarfBuzz and Uniscribe - fonts
+        /// do their conjuncts in the basic features, and some carry Latin-oriented 'liga' lookups that
+        /// would otherwise also run over the Indic glyphs.
+        /// </summary>
+        protected override void PlanPostprocessingFeatures(IGlyphShapingCollection collection, int index, int count)
+        {
+            base.PlanPostprocessingFeatures(collection, index, count);
+            for (int i = index; i < index + count; i++)
+            {
+                collection.DisableShapingFeature(i, LigaTag);
+            }
+        }
+
         protected override void AssignFeatures(IGlyphShapingCollection collection, int index, int count)
         {
             if (collection is not GlyphSubstitutionCollection substitutionCollection)
@@ -108,10 +122,12 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
                 return;
             }
 
-            // Decompose split matras
+            // Decompose split matras.
+            // Modified for Agent DVR: only this run's glyphs - the loop ran down to 0, re-decomposing split
+            // vowels in earlier runs after their lookups had been applied, and shifting this run's start.
             Span<ushort> buffer = stackalloc ushort[16];
             int end = index + count;
-            for (int i = end - 1; i >= 0; i--)
+            for (int i = end - 1; i >= index; i--)
             {
                 GlyphShapingData data = substitutionCollection[i];
                 FontMetrics fontMetrics = this.fontMetrics;

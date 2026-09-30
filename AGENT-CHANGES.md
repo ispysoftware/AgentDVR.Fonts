@@ -173,6 +173,24 @@ Modified by iSpyConnect / The Playful Group for Agent DVR. Changes from v1.0.1:
   attachment subtracts the advances between base and mark, so in horizontal text every mark from a
   fallback font - Devanagari vowel signs, virama, reph, anusvara - was pushed a whole line down and
   out of the text box.
+- Fallback fonts are chosen per grapheme cluster, as browsers do: a cluster with a visible character the
+  text's font lacks is drawn entirely by the first fallback font that has all of its visible characters
+  (invisible ones - ZWJ, variation selectors - are not required). Sequences stay in one font and form their
+  ligature: 🏃‍♀️ took ♀ from the primary font and 🏃 from the emoji font, and a keycap (1️⃣) drew the
+  primary font's "1" with no keycap. If no font covers a cluster, missing glyphs are still filled one by
+  one, as before.
+- Shapers on runs that don't start the text:
+  - Default shaper: direction features (ltra/ltrm/rtla/rtlm) and the vertical-layout check covered
+    [index, count) rather than [index, index + count), so later runs lost them.
+  - Hangul: the jamo state machine passed run-relative positions to helpers that index the collection
+    directly, and its loops had the same bound, so conjoining jamo after other text (e.g. "Cam 한") were
+    left as separate jamo, and the GPOS jamo features landed on the wrong glyphs. Indices are absolute and
+    the run end follows (de)composition.
+  - Indic/USE split-vowel decomposition walked back to the start of the text instead of the start of the
+    run.
+- Indic (and Khmer) runs don't apply 'liga', as in HarfBuzz and Uniscribe.
+- TrueType hinting interpreter: an instance field marked [ThreadStatic] (ignored on instance fields), so
+  threads hinting the same font shared one interpreter. Now one per font per thread, created on first use.
 - Performance pass (not upstream changes; output is pixel-identical to before):
   - Build: `LangVersion latest`; the netstandard2.0/netcoreapp polyfills (`HashCode`, `MathF`,
     nullable attributes, stream/encoding extensions) and the `SUPPORTS_*` conditional code are gone.

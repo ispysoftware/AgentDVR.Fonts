@@ -178,6 +178,9 @@ namespace SixLabors.Fonts
             List<Font> triedFallbackFonts = new();
             if (!complete && options.FallbackFontFamilies is { Count: > 0 } fallbackFamilies)
             {
+                // Modified for Agent DVR: fallback fonts are chosen per grapheme cluster (see BeginFallback).
+                positionings.BeginFallback(text);
+
                 // Finally try our fallback fonts.
                 // We do a complete run here across the whole collection.
                 // Modified for Agent DVR: a fallback font with none of the still-missing characters is skipped
