@@ -1,13 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <AssemblyName>SixLabors.Fonts</AssemblyName>
-    <AssemblyTitle>SixLabors.Fonts</AssemblyTitle>
+    <!-- Renamed so a modified build doesn't ship under Six Labors' name. Namespaces stay SixLabors.Fonts
+         to keep the code comparable with upstream; see AGENT-CHANGES.md. -->
+    <AssemblyName>AgentDVR.Fonts</AssemblyName>
+    <AssemblyTitle>AgentDVR.Fonts</AssemblyTitle>
     <RootNamespace>SixLabors.Fonts</RootNamespace>
-    <Description>A cross-platform library for loading and laying out fonts for processing and measuring; written in C#. Agent DVR fork of v1.0.1 (Apache-2.0).</Description>
-    <Copyright>Copyright © Six Labors</Copyright>
-    <Authors>Six Labors and contributors</Authors>
-    <Company>Six Labors</Company>
+    <Description>Font loading, shaping and layout for Agent DVR. Derived from SixLabors.Fonts v1.0.1 (Apache-2.0), modified by The Playful Group.</Description>
+    <Copyright>Copyright © Six Labors; modifications copyright © The Playful Group</Copyright>
+    <Authors>Six Labors and contributors; The Playful Group</Authors>
+    <Company>The Playful Group</Company>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <AssemblyVersion>1.0.0.0</AssemblyVersion>

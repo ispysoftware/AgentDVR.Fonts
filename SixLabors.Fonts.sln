@@ -27,7 +27,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{56801022
 		tests\Directory.Build.targets = tests\Directory.Build.targets
 	EndProjectSection
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SixLabors.Fonts", "src\SixLabors.Fonts\SixLabors.Fonts.csproj", "{09E744EC-4852-4FC7-BE78-C1B399F17967}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AgentDVR.Fonts", "src\SixLabors.Fonts\AgentDVR.Fonts.csproj", "{09E744EC-4852-4FC7-BE78-C1B399F17967}"
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SixLabors.Fonts.Tests", "tests\SixLabors.Fonts.Tests\SixLabors.Fonts.Tests.csproj", "{F836E8E6-B4D9-4208-8346-140C74678B91}"
 EndProject
