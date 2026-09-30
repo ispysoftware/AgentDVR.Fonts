@@ -1200,9 +1200,14 @@ namespace SixLabors.Fonts
 
                         // Match how line height is calculated for browsers.
                         // https://www.w3.org/TR/CSS2/visudet.html#propdef-line-height
+                        // Modified for Agent DVR: half-leading shares the difference between the
+                        // content area (ascender + descender) and the 1em line box. The line gap is
+                        // not part of the content area - including it moved the baseline up by half
+                        // the gap, pushing fonts with a large gap (e.g. Tekton Pro) out of the top.
                         float descender = Math.Abs(metricsHeader.Descender * scaleY);
                         float lineHeight = metric.UnitsPerEm * scaleY;
-                        float delta = ((metricsHeader.LineHeight * scaleY) - lineHeight) * .5F;
+                        float contentHeight = (metricsHeader.Ascender + Math.Abs(metricsHeader.Descender)) * scaleY;
+                        float delta = (contentHeight - lineHeight) * .5F;
                         ascender -= delta;
                         descender -= delta;
 
