@@ -90,12 +90,7 @@ namespace SixLabors.Fonts
                 string[] expanded = StandardFontLocations.Select(x => Environment.ExpandEnvironmentVariables(x)).ToArray();
                 string[] existingDirectories = expanded.Where(x => Directory.Exists(x)).ToArray();
 
-                // We do this to provide a consistent experience with case sensitive file systems.
-                paths = existingDirectories
-                    .SelectMany(x => Directory.EnumerateFiles(x, "*.*", SearchOption.AllDirectories))
-                    .Where(x => Path.GetExtension(x).Equals(".ttf", StringComparison.OrdinalIgnoreCase)
-                                || Path.GetExtension(x).Equals(".ttc", StringComparison.OrdinalIgnoreCase)
-                                || Path.GetExtension(x).Equals(".otf", StringComparison.OrdinalIgnoreCase));
+                paths = EnumerateFontFiles(existingDirectories).ToList();
 
                 this.searchDirectories = existingDirectories;
             }
@@ -146,6 +141,78 @@ namespace SixLabors.Fonts
         IEnumerator<FontMetrics> IReadOnlyFontMetricsCollection.GetEnumerator()
             => ((IReadOnlyFontMetricsCollection)this.collection).GetEnumerator();
 
+        /// <summary>
+        /// Modified for Agent DVR: walks the font directories so that one unreadable folder, or a symlink
+        /// loop, can't break system font enumeration for the whole process. It used a lazy AllDirectories
+        /// enumeration whose IO errors surfaced outside the per-font try/catch and failed the collection.
+        /// Each directory is visited once (by resolved path) to a bounded depth. Extensions are matched
+        /// case-insensitively for a consistent experience on case-sensitive file systems.
+        /// </summary>
+        /// <param name="roots">The directories to search.</param>
+        /// <returns>The font file paths.</returns>
+        private static IEnumerable<string> EnumerateFontFiles(IEnumerable<string> roots)
+        {
+            const int maxDepth = 16;
+            HashSet<string> visited = new(RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+            Stack<(string Path, int Depth)> pending = new();
+            foreach (string root in roots.Reverse())
+            {
+                pending.Push((root, 0));
+            }
+
+            while (pending.Count > 0)
+            {
+                (string dir, int depth) = pending.Pop();
+                string key;
+                try
+                {
+                    key = Directory.ResolveLinkTarget(dir, returnFinalTarget: true)?.FullName ?? Path.GetFullPath(dir);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (!visited.Add(key))
+                {
+                    continue;
+                }
+
+                string[] files;
+                string[] subdirectories;
+                try
+                {
+                    files = Directory.GetFiles(dir);
+                    subdirectories = depth < maxDepth ? Directory.GetDirectories(dir) : Array.Empty<string>();
+                }
+                catch
+                {
+                    // Unreadable (permissions, broken link, removed while enumerating) - skip it.
+                    continue;
+                }
+
+                foreach (string file in files)
+                {
+                    string extension = Path.GetExtension(file);
+                    if (extension.Equals(".ttf", StringComparison.OrdinalIgnoreCase)
+                        || extension.Equals(".otf", StringComparison.OrdinalIgnoreCase)
+                        || IsCollection(file))
+                    {
+                        yield return file;
+                    }
+                }
+
+                for (int i = subdirectories.Length - 1; i >= 0; i--)
+                {
+                    pending.Push((subdirectories[i], depth + 1));
+                }
+            }
+        }
+
+        private static bool IsCollection(string path)
+            => path.EndsWith(".ttc", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".otc", StringComparison.OrdinalIgnoreCase);
+
         private static FontCollection CreateSystemFontCollection(IEnumerable<string> paths, IReadOnlyCollection<string> searchDirectories)
         {
             var collection = new FontCollection(searchDirectories);
@@ -154,7 +221,7 @@ namespace SixLabors.Fonts
             {
                 try
                 {
-                    if (path.EndsWith(".ttc", StringComparison.OrdinalIgnoreCase))
+                    if (IsCollection(path))
                     {
                         collection.AddCollection(path);
                     }

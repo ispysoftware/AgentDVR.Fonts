@@ -31,3 +31,6 @@ Modified by iSpyConnect / The Playful Group for Agent DVR. Changes from v1.0.1:
 - GSUB lookup type 8 (reverse chaining single substitution) follows the spec: only the covered
   glyph is replaced, by `substituteGlyphIDs[coverage index]`; lookahead starts after it; context
   reads stay inside the run. It previously overwrote following glyphs with the whole array.
+- System font enumeration walks the font directories itself: an unreadable folder or a symlink
+  loop is skipped instead of failing `SystemFonts` for the whole process (the lazy AllDirectories
+  enumeration threw outside the per-font try/catch). `.otc` collections are included.
