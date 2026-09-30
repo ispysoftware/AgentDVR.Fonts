@@ -1,6 +1,7 @@
 // Copyright (c) Six Labors.
 // Licensed under the Apache License, Version 2.0.
 
+using System;
 using System.IO;
 
 namespace SixLabors.Fonts.Tables.AdvancedTypographic.GSub
@@ -77,25 +78,28 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GSub
             }
 
             // Apply ruleset for the given glyph id.
-            SkippingGlyphIterator iterator = new(fontMetrics, collection, index, this.LookupFlags);
+            // Modified for Agent DVR: context-aware matching, backtrack nearest-first (see AdvancedTypographicUtils).
+            SkippingGlyphIterator iterator = SkippingGlyphIterator.ForContext(fontMetrics, collection, index, this.LookupFlags, this.MarkFilteringSet, feature, index + count);
+            Span<int> positions = stackalloc int[AdvancedTypographicUtils.MaxContextLength];
             ChainedSequenceRuleTable[] rules = seqRuleSet.SequenceRuleTables;
             for (int i = 0; i < rules.Length; i++)
             {
                 ChainedSequenceRuleTable ruleTable = rules[i];
-                if (!AdvancedTypographicUtils.ApplyChainedSequenceRule(iterator, ruleTable))
+                if (!AdvancedTypographicUtils.MatchChainedRule(
+                    ref iterator,
+                    index,
+                    new GlyphIdMatcher(ruleTable.BacktrackSequence),
+                    ruleTable.BacktrackSequence.Length,
+                    new GlyphIdMatcher(ruleTable.InputSequence),
+                    ruleTable.InputSequence.Length,
+                    new GlyphIdMatcher(ruleTable.LookaheadSequence),
+                    ruleTable.LookaheadSequence.Length,
+                    positions))
                 {
                     continue;
                 }
 
-                return AdvancedTypographicUtils.ApplyLookupList(
-                    fontMetrics,
-                    table,
-                    feature,
-                    this.LookupFlags,
-                    ruleTable.SequenceLookupRecords,
-                    collection,
-                    index,
-                    count);
+                return AdvancedTypographicUtils.ApplyLookupList(fontMetrics, table, feature, ruleTable.SequenceLookupRecords, collection, positions, ruleTable.InputSequence.Length + 1, index + count);
             }
 
             return false;
@@ -171,24 +175,26 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GSub
             }
 
             // Apply ruleset for the given glyph class id.
-            SkippingGlyphIterator iterator = new(fontMetrics, collection, index, this.LookupFlags);
+            SkippingGlyphIterator iterator = SkippingGlyphIterator.ForContext(fontMetrics, collection, index, this.LookupFlags, this.MarkFilteringSet, feature, index + count);
+            Span<int> positions = stackalloc int[AdvancedTypographicUtils.MaxContextLength];
             for (int lookupIndex = 0; lookupIndex < rules.Length; lookupIndex++)
             {
                 ChainedClassSequenceRuleTable ruleTable = rules[lookupIndex];
-                if (!AdvancedTypographicUtils.ApplyChainedClassSequenceRule(iterator, ruleTable, this.inputClassDefinitionTable, this.backtrackClassDefinitionTable, this.lookaheadClassDefinitionTable))
+                if (!AdvancedTypographicUtils.MatchChainedRule(
+                    ref iterator,
+                    index,
+                    new GlyphClassMatcher(ruleTable.BacktrackSequence, this.backtrackClassDefinitionTable),
+                    ruleTable.BacktrackSequence.Length,
+                    new GlyphClassMatcher(ruleTable.InputSequence, this.inputClassDefinitionTable),
+                    ruleTable.InputSequence.Length,
+                    new GlyphClassMatcher(ruleTable.LookaheadSequence, this.lookaheadClassDefinitionTable),
+                    ruleTable.LookaheadSequence.Length,
+                    positions))
                 {
                     continue;
                 }
 
-                return AdvancedTypographicUtils.ApplyLookupList(
-                    fontMetrics,
-                    table,
-                    feature,
-                    this.LookupFlags,
-                    ruleTable.SequenceLookupRecords,
-                    collection,
-                    index,
-                    count);
+                return AdvancedTypographicUtils.ApplyLookupList(fontMetrics, table, feature, ruleTable.SequenceLookupRecords, collection, positions, ruleTable.InputSequence.Length + 1, index + count);
             }
 
             return false;
@@ -242,29 +248,20 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GSub
                 return false;
             }
 
-            if (!AdvancedTypographicUtils.CheckAllCoverages(
-                fontMetrics,
-                this.LookupFlags,
-                collection,
+            SkippingGlyphIterator iterator = SkippingGlyphIterator.ForContext(fontMetrics, collection, index, this.LookupFlags, this.MarkFilteringSet, feature, index + count);
+            Span<int> positions = stackalloc int[AdvancedTypographicUtils.MaxContextLength];
+            if (!AdvancedTypographicUtils.MatchCoverageContext(
+                ref iterator,
                 index,
-                count,
                 this.inputCoverageTables,
                 this.backtrackCoverageTables,
-                this.lookaheadCoverageTables))
+                this.lookaheadCoverageTables,
+                positions))
             {
                 return false;
             }
 
-            // It's a match. Perform substitutions and return true if anything changed.
-            return AdvancedTypographicUtils.ApplyLookupList(
-                fontMetrics,
-                table,
-                feature,
-                this.LookupFlags,
-                this.sequenceLookupRecords,
-                collection,
-                index,
-                count);
+            return AdvancedTypographicUtils.ApplyLookupList(fontMetrics, table, feature, this.sequenceLookupRecords, collection, positions, this.inputCoverageTables.Length, index + count);
         }
     }
 }

@@ -109,17 +109,11 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                     return false;
                 }
 
-                // Search backward for a base glyph.
-                int baseGlyphIndex = index;
-                while (--baseGlyphIndex >= 0)
-                {
-                    GlyphShapingData data = collection[baseGlyphIndex];
-                    if (!AdvancedTypographicUtils.IsMarkGlyph(fontMetrics, data.GlyphId, data))
-                    {
-                        break;
-                    }
-                }
-
+                // Search backward for the ligature.
+                // Modified for Agent DVR: marks and default-ignorables are skipped with the skipping iterator
+                // (it walked raw indices).
+                SkippingGlyphIterator iterator = SkippingGlyphIterator.ForContext(fontMetrics, collection, index, LookupFlags.IgnoreMarks, 0, feature, index + count);
+                int baseGlyphIndex = iterator.Previous();
                 if (baseGlyphIndex < 0)
                 {
                     return false;
@@ -136,21 +130,20 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                 // is identical to the ligature ID of the found ligature.
                 // If yes, we can directly use the component index. If not, we attach the mark
                 // glyph to the last component of the ligature.
+                // Modified for Agent DVR: the component count is the font's (it used the glyph's code point
+                // count, which needn't match).
                 LigatureAttachTable ligatureAttach = this.ligatureArrayTable.LigatureAttachTables[ligatureIndex];
-                GlyphShapingData markGlyph = collection[index];
-                GlyphShapingData ligGlyph = collection[baseGlyphIndex];
-                int compIndex = ligGlyph.LigatureId > 0 && ligGlyph.LigatureId == markGlyph.LigatureId && markGlyph.LigatureComponent > 0
-                    ? Math.Min(markGlyph.LigatureComponent, ligGlyph.CodePointCount) - 1
-                    : ligGlyph.CodePointCount - 1;
-
-                // The font's component count needn't match the glyph's code point count; clamp to it.
                 ComponentRecord[] components = ligatureAttach.ComponentRecords;
                 if (components.Length == 0)
                 {
                     return false;
                 }
 
-                compIndex = Math.Clamp(compIndex, 0, components.Length - 1);
+                GlyphShapingData markGlyph = collection[index];
+                GlyphShapingData ligGlyph = collection[baseGlyphIndex];
+                int compIndex = ligGlyph.LigatureId > 0 && ligGlyph.LigatureId == markGlyph.LigatureId && markGlyph.LigatureComponent > 0
+                    ? Math.Min(markGlyph.LigatureComponent, components.Length) - 1
+                    : components.Length - 1;
 
                 MarkRecord markRecord = this.markArrayTable.MarkRecords[markIndex];
                 AnchorTable?[] anchors = components[compIndex].LigatureAnchorTables;

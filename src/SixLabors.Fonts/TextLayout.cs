@@ -1205,34 +1205,11 @@ namespace SixLabors.Fonts
                             : metric.FontMetrics.VerticalMetrics;
                         float ascender = metricsHeader.Ascender * scaleY;
 
-                        // Adjust ascender for glyphs with a negative tsb. e.g. emoji to prevent cutoff.
-                        if (!CodePoint.IsWhiteSpace(codePoint))
-                        {
-                            if (!isDecomposed)
-                            {
-                                short tsbOffset = 0;
-
-                                // We need to check all the metrics.
-                                for (int mi = 0; mi < metrics.Count; mi++)
-                                {
-                                    tsbOffset = Math.Min(tsbOffset, metrics[mi].TopSideBearing);
-                                }
-
-                                if (tsbOffset < 0)
-                                {
-                                    ascender -= tsbOffset * scaleY;
-                                }
-                            }
-                            else
-                            {
-                                // Decomposed glyphs contain a single metric.
-                                short tsbOffset = metric.TopSideBearing;
-                                if (tsbOffset < 0)
-                                {
-                                    ascender -= tsbOffset * scaleY;
-                                }
-                            }
-                        }
+                        // Modified for Agent DVR: removed the "negative top side bearing" ascender adjustment. It
+                        // lowered the baseline of any line holding a glyph taller than the ascender (stacked
+                        // Vietnamese/Thai marks, some symbols) without growing the measured height, so text
+                        // jumped between lines and overflowed the bottom of its box - and with a vmtx table it
+                        // read the vertical bearing, meaningless here. Upstream removed it too.
 
                         // Match how line height is calculated for browsers.
                         // https://www.w3.org/TR/CSS2/visudet.html#propdef-line-height

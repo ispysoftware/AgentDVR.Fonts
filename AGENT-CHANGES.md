@@ -106,3 +106,65 @@ Modified by iSpyConnect / The Playful Group for Agent DVR. Changes from v1.0.1:
 - cmap format 14: repeated selector records or mappings keep the first instead of failing the
   font; the selector-record count is capped by the subtable length; default-UVS ranges include
   their last code point.
+- Contextual matching (GSUB 5/6, GPOS 7/8, ligatures, pair/cursive/mark searches) rewritten on one
+  context-aware iterator (`SkippingGlyphIterator.ForContext`) with struct matchers instead of
+  allocated delegates:
+  - Backtrack sequences are matched nearest-first, as the spec stores them. They were compared
+    farthest-first, so any rule with two or more backtrack glyphs misfired (Latin calt/liga included).
+  - Default-ignorables (LRM/RLM, variation selectors, ...) are stepped over unless a rule matches
+    them, as in HarfBuzz; ZWNJ blocks GSUB matching; ZWJ is transparent except for features that
+    handle joiners (Indic/USE basic features, rlig, rclt); GPOS steps over both. CGJ, Mongolian FVS
+    and TAG characters stay visible to GSUB. They previously broke ligatures and kerning.
+  - GDEF mark glyph sets are loaded (offsets are 32-bit) and UseMarkFilteringSet is honoured.
+  - Forward matching stops at the end of the run; in GPOS another font's glyphs end the context.
+  - Nested lookups apply at the glyphs actually matched for each sequence index, with positions
+    corrected as nested lookups add or remove glyphs (HarfBuzz's scheme), instead of a re-count that
+    disagreed with the matching.
+  - A matched context finishes the lookup at that glyph even if nothing changed (later subtables
+    still ran), and the lookup continues after the matched input rather than re-running over it.
+    Ligatures, multiple substitutions and pairs whose second glyph was adjusted likewise continue
+    after what they consumed or produced; a deleted glyph no longer makes the next one be skipped.
+- Lookup application: consecutive shaping stages without pre/post actions are applied as one pass -
+  their lookups merged, each applied once, in lookup-list order - as the spec and HarfBuzz do; all
+  GPOS features are one pass. A lookup shared by two features (Indic/USE 'dist' and 'kern') was
+  applied twice, and lookups interleaved across features ran out of order. Stages that must run on
+  their own are marked `standalone` (rvrn, the Arabic joining forms, the Indic basic features).
+  Each lookup's walk starts at the first glyph it doesn't ignore and uses its mark filtering set.
+- Script/language system selection follows HarfBuzz: the text's script tags, then DFLT, dflt, latn,
+  else no features (it fell back to the font's first script, e.g. arab lookups on Latin text); a
+  'dflt' LangSys record, then the default LangSys, else none (with no default it mixed every
+  language's features together).
+- Ligatures (GSUB 4): an ordinary ligature gets a new ligature id and the marks skipped between
+  its components, and those following its last component, are renumbered to the new components; a
+  mark or base-plus-marks ligature keeps its first glyph's id and component. This was inverted
+  (ids allocated for mark ligatures, 0 for real ones; skipped marks renumbered in the wrong case).
+  Component counts are tracked per glyph (`LigatureComponentCount`) rather than taken from the code
+  point count, and glyphs attached to different components of an earlier ligature don't ligate
+  unless that ligature is ignored by the lookup. A single substitution keeps the glyph's ligature id
+  and component; a multiple substitution numbers its output only outside an existing ligature.
+- Mark positioning: mark-to-base and mark-to-ligature find their base with the skipping iterator
+  (they walked raw indices); of a multiple-substitution sequence only the first glyph takes marks
+  unless a mark sits inside it (it skipped every glyph with a ligature component). Mark-to-mark finds
+  the previous mark with the lookup's own filtering (it took the raw previous glyph) and its
+  ligature test is the right way round. Mark-to-ligature uses the font's component count.
+  `IsMarkGlyph` agrees with the glyph class (it returned false for every glyph in fonts without GDEF
+  classes, so mark searches and mark-advance zeroing ignored combining marks there). Without GDEF
+  classes only non-spacing marks count as marks, as HarfBuzz synthesizes them - spacing marks kept
+  getting their advance zeroed.
+- Cursive attachment: the current glyph's entry anchor joins the exit anchor of the previous glyph
+  the lookup sees (it used the raw next glyph, so a mark between letters broke the join); the
+  RightToLeft flag's choice of which glyph stays on the baseline was inverted; "no attachment" is 0
+  (it was -1, also a real link to the previous glyph); separating a reversed pair clears its offset.
+  Attachment offsets (cursive and mark) are propagated recursively, parent first, with a depth cap -
+  chains longer than two got partial offsets, and a bad index comparison abandoned the rest of the run.
+  Negative advances are clamped to 0 instead of wrapping to ~65535.
+- Pair positioning (GPOS 2): the second glyph is found with the lookup's skipping rules (it was the
+  raw next glyph, in both formats); pair sets are binary searched (records are sorted by second
+  glyph; unsorted fonts are still scanned).
+- Indic/USE broken clusters: the dotted circle goes before the first non-Repha glyph with its own code
+  point and category (the Repha search lagged a glyph, so it duplicated or overwrote one; the circle
+  went after the broken character and inherited its code point and category).
+- `TextLayout.BreakLines`: removed the "negative top side bearing" ascender adjustment, which lowered
+  the baseline of lines containing a glyph taller than the ascender (stacked Vietnamese/Thai marks,
+  some symbols) without growing the measured height, and read the vertical bearing when a font has
+  vmtx. Upstream removed it too.

@@ -74,18 +74,20 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
             this.AddFeature(collection, index, count, LoclTag, preAction: SetupSyllables);
             this.AddFeature(collection, index, count, CcmpTag);
 
+            // Modified for Agent DVR: the basic features are applied one at a time, in order, as HarfBuzz does,
+            // now that other features' lookups are merged.
             this.AddFeature(collection, index, count, NuktTag, preAction: this.InitialReorder);
-            this.AddFeature(collection, index, count, AkhnTag);
+            this.AddFeature(collection, index, count, AkhnTag, standalone: true);
 
-            this.AddFeature(collection, index, count, RphfTag, false);
-            this.AddFeature(collection, index, count, RkrfTag);
-            this.AddFeature(collection, index, count, PrefTag, false);
-            this.AddFeature(collection, index, count, BlwfTag, false);
-            this.AddFeature(collection, index, count, AbvfTag, false);
-            this.AddFeature(collection, index, count, HalfTag, false);
-            this.AddFeature(collection, index, count, PstfTag, false);
-            this.AddFeature(collection, index, count, VatuTag);
-            this.AddFeature(collection, index, count, CjctTag);
+            this.AddFeature(collection, index, count, RphfTag, false, standalone: true);
+            this.AddFeature(collection, index, count, RkrfTag, standalone: true);
+            this.AddFeature(collection, index, count, PrefTag, false, standalone: true);
+            this.AddFeature(collection, index, count, BlwfTag, false, standalone: true);
+            this.AddFeature(collection, index, count, AbvfTag, false, standalone: true);
+            this.AddFeature(collection, index, count, HalfTag, false, standalone: true);
+            this.AddFeature(collection, index, count, PstfTag, false, standalone: true);
+            this.AddFeature(collection, index, count, VatuTag, standalone: true);
+            this.AddFeature(collection, index, count, CjctTag, standalone: true);
             this.AddFeature(collection, index, count, CfarTag, false, postAction: this.FinalReorder);
 
             this.AddFeature(collection, index, count, InitTag, false);
@@ -262,27 +264,25 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
 
                 if (dataInfo != null && type == "broken_cluster" && fontMetrics.TryGetGlyphId(new(DottedCircle), out ushort id))
                 {
-                    // Insert after possible Repha.
+                    // Insert before the first glyph that isn't a Repha.
+                    // Modified for Agent DVR: the search lagged one glyph behind (so with a Repha it duplicated
+                    // or overwrote the wrong glyph), the circle went after the broken character instead of
+                    // before it, and it inherited that character's code point and category.
                     int i = start;
-                    GlyphShapingData current = substitutionCollection[i];
-                    for (i = start; i < end; i++)
+                    while (i < end - 1 && substitutionCollection[i].IndicShapingEngineInfo?.Category == Categories.Repha)
                     {
-                        if (current.IndicShapingEngineInfo?.Category != Categories.Repha)
-                        {
-                            break;
-                        }
-
-                        current = substitutionCollection[i];
+                        i++;
                     }
 
                     Span<ushort> glyphs = stackalloc ushort[2];
-                    glyphs[0] = current.GlyphId;
-                    glyphs[1] = id;
+                    glyphs[0] = id;
+                    glyphs[1] = substitutionCollection[i].GlyphId;
 
+                    // Replace keeps the existing glyph data at i (now the circle) and clones it after.
                     substitutionCollection.Replace(i, glyphs);
 
-                    // Update shaping info for newly inserted data.
-                    GlyphShapingData dotted = substitutionCollection[i + 1];
+                    GlyphShapingData dotted = substitutionCollection[i];
+                    dotted.CodePoint = new CodePoint(DottedCircle);
                     var dottedCategory = (Categories)(1 << IndicShapingCategory(dotted.CodePoint));
                     var dottedPosition = (Positions)IndicShapingPosition(dotted.CodePoint);
                     dotted.IndicShapingEngineInfo = new(dottedCategory, dottedPosition, dataInfo.SyllableType, dataInfo.Syllable);

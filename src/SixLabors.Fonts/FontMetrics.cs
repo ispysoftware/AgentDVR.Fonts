@@ -161,6 +161,15 @@ namespace SixLabors.Fonts
         internal abstract bool TryGetMarkAttachmentClass(ushort glyphId, [NotNullWhen(true)] out GlyphClassDef? markAttachmentClass);
 
         /// <summary>
+        /// Modified for Agent DVR: gets a value indicating whether the GDEF mark glyph set contains the glyph
+        /// (false when the font has no such set).
+        /// </summary>
+        /// <param name="markGlyphSet">The mark glyph set index.</param>
+        /// <param name="glyphId">The glyph identifier.</param>
+        /// <returns>true, if the set covers the glyph.</returns>
+        internal abstract bool IsInMarkGlyphSet(ushort markGlyphSet, ushort glyphId);
+
+        /// <summary>
         /// Gets the glyph metrics for a given code point.
         /// </summary>
         /// <param name="codePoint">The Unicode code point to get the glyph for.</param>

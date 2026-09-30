@@ -154,10 +154,32 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
                 i += delta;
                 count += delta;
 
-                IEnumerable<ShapingStage> stages = shaper.GetShapingStages();
+                // Modified for Agent DVR: consecutive stages with no pre/post action that aren't marked standalone
+                // are applied together - their lookups merged, each applied once, in lookup-list order (see
+                // AdvancedTypographicUtils.CollectLookups) - with features taken from the language system
+                // HarfBuzz would choose.
+                LangSysTable? langSys = AdvancedTypographicUtils.SelectLangSys(this.ScriptList, current);
+                List<ShapingStage> stages = new(shaper.GetShapingStages());
+                List<Tag> group = new();
                 SkippingGlyphIterator iterator = new(fontMetrics, collection, index, default);
-                foreach (ShapingStage stage in stages)
+                int s = 0;
+                while (s < stages.Count)
                 {
+                    ShapingStage stage = stages[s];
+                    group.Clear();
+                    if (stage.CanMerge)
+                    {
+                        while (s < stages.Count && stages[s].CanMerge)
+                        {
+                            group.Add(stages[s].FeatureTag);
+                            s++;
+                        }
+
+                        List<FeatureLookup> merged = AdvancedTypographicUtils.CollectLookups(this.FeatureList, this.LookupList.LookupTables.Length, langSys, group);
+                        this.ApplyLookups(fontMetrics, collection, ref iterator, merged, index, ref count, ref i, maxCount, maxOperationsCount, ref currentOperations);
+                        continue;
+                    }
+
                     collectionCount = collection.Count;
                     stage.PreProcessFeature(collection, index, count);
 
@@ -166,21 +188,9 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
                     count += delta;
                     i += delta;
 
-                    Tag featureTag = stage.FeatureTag;
-
-                    this.ApplyFeature(
-                        fontMetrics,
-                        collection,
-                        ref iterator,
-                        in featureTag,
-                        current,
-                        index,
-                        ref count,
-                        ref i,
-                        ref collectionCount,
-                        maxCount,
-                        maxOperationsCount,
-                        ref currentOperations);
+                    group.Add(stage.FeatureTag);
+                    List<FeatureLookup> lookups = AdvancedTypographicUtils.CollectLookups(this.FeatureList, this.LookupList.LookupTables.Length, langSys, group);
+                    this.ApplyLookups(fontMetrics, collection, ref iterator, lookups, index, ref count, ref i, maxCount, maxOperationsCount, ref currentOperations);
 
                     collectionCount = collection.Count;
                     stage.PostProcessFeature(collection, index, count);
@@ -189,6 +199,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
                     delta = collection.Count - collectionCount;
                     count += delta;
                     i += delta;
+                    s++;
                 }
             }
         }
@@ -207,72 +218,85 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
             int maxOperationsCount,
             ref int currentOperations)
         {
-            if (this.TryGetFeatureLookups(in featureTag, current, out List<(Tag Feature, ushort Index, LookupTable LookupTable)>? lookups))
+            if (this.TryGetFeatureLookups(in featureTag, current, out List<FeatureLookup>? lookups))
             {
-                // Apply features in order.
-                foreach ((Tag Feature, ushort Index, LookupTable LookupTable) featureLookup in lookups)
-                {
-                    Tag feature = featureLookup.Feature;
-                    iterator.Reset(index, featureLookup.LookupTable.LookupFlags);
-
-                    while (iterator.Index < index + count)
-                    {
-                        if (collection.Count >= maxCount || currentOperations++ >= maxOperationsCount)
-                        {
-                            return;
-                        }
-
-                        List<TagEntry> glyphFeatures = collection[iterator.Index].Features;
-                        if (!HasFeature(glyphFeatures, in feature))
-                        {
-                            iterator.Next();
-                            continue;
-                        }
-
-                        collectionCount = collection.Count;
-                        featureLookup.LookupTable.TrySubstitution(fontMetrics, this, collection, featureLookup.Feature, iterator.Index, count - (iterator.Index - index));
-                        iterator.Next();
-
-                        // Account for substitutions changing the length of the collection.
-                        int delta = collection.Count - collectionCount;
-                        count += delta;
-                        i += delta;
-                    }
-                }
+                this.ApplyLookups(fontMetrics, collection, ref iterator, lookups, index, ref count, ref i, maxCount, maxOperationsCount, ref currentOperations);
             }
+
+            collectionCount = collection.Count;
         }
 
         internal bool TryGetFeatureLookups(
-            in Tag stageFeature,
+            in Tag feature,
             ScriptClass script,
-            [NotNullWhen(true)] out List<(Tag Feature, ushort Index, LookupTable LookupTable)>? value)
+            [NotNullWhen(true)] out List<FeatureLookup>? value)
         {
-            if (this.ScriptList is null)
-            {
-                value = null;
-                return false;
-            }
+            LangSysTable? langSys = AdvancedTypographicUtils.SelectLangSys(this.ScriptList, script);
+            value = AdvancedTypographicUtils.CollectLookups(this.FeatureList, this.LookupList.LookupTables.Length, langSys, new[] { feature });
+            return value.Count > 0;
+        }
 
-            ScriptListTable scriptListTable = this.ScriptList.Default();
-            Tag[] tags = UnicodeScriptTagMap.Instance[script];
-            for (int i = 0; i < tags.Length; i++)
+        /// <summary>
+        /// Applies each lookup across the run, at every glyph the lookup doesn't ignore that has one of the
+        /// lookup's features enabled.
+        /// Modified for Agent DVR: the walk starts at the first glyph the lookup doesn't ignore (it applied at
+        /// the run start regardless), uses the lookup's mark filtering set, and continues where the lookup
+        /// says - after a matched context, a ligature, a multiple substitution's output - instead of at the
+        /// next glyph, so glyphs a lookup consumed or produced aren't processed by it again (and a deleted
+        /// glyph no longer made the following one be skipped).
+        /// </summary>
+        private void ApplyLookups(
+            FontMetrics fontMetrics,
+            GlyphSubstitutionCollection collection,
+            ref SkippingGlyphIterator iterator,
+            List<FeatureLookup> lookups,
+            int index,
+            ref int count,
+            ref int i,
+            int maxCount,
+            int maxOperationsCount,
+            ref int currentOperations)
+        {
+            foreach (FeatureLookup featureLookup in lookups)
             {
-                if (this.ScriptList.TryGetValue(tags[i].Value, out ScriptListTable? table))
+                if (!AdvancedTypographicUtils.TryGetAt(this.LookupList.LookupTables, featureLookup.LookupIndex, out LookupTable? lookupTable))
                 {
-                    scriptListTable = table;
-                    break;
+                    continue;
+                }
+
+                iterator.Reset(index - 1, lookupTable.LookupFlags, lookupTable.MarkFilteringSet);
+                iterator.Next();
+                while (iterator.Index < index + count)
+                {
+                    if (collection.Count >= maxCount || currentOperations++ >= maxOperationsCount)
+                    {
+                        return;
+                    }
+
+                    if (!featureLookup.TryGetEnabledFeature(collection[iterator.Index].Features, out Tag feature))
+                    {
+                        iterator.Next();
+                        continue;
+                    }
+
+                    int collectionCount = collection.Count;
+                    AdvancedTypographicUtils.TakeResumeIndex();
+                    lookupTable.TrySubstitution(fontMetrics, this, collection, feature, iterator.Index, count - (iterator.Index - index));
+
+                    // Account for substitutions changing the length of the collection.
+                    int delta = collection.Count - collectionCount;
+                    count += delta;
+                    i += delta;
+
+                    int resume = AdvancedTypographicUtils.TakeResumeIndex();
+                    if (resume >= 0)
+                    {
+                        iterator.Index = resume - 1;
+                    }
+
+                    iterator.Next();
                 }
             }
-
-            LangSysTable? defaultLangSysTable = scriptListTable.DefaultLangSysTable;
-            if (defaultLangSysTable != null)
-            {
-                value = this.GetFeatureLookups(stageFeature, defaultLangSysTable);
-                return value.Count > 0;
-            }
-
-            value = this.GetFeatureLookups(stageFeature, scriptListTable.LangSysTables);
-            return value.Count > 0;
         }
 
         private Tag GetUnicodeScriptTag(ScriptClass script)
@@ -294,56 +318,5 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
             return default;
         }
 
-        private List<(Tag Feature, ushort Index, LookupTable LookupTable)> GetFeatureLookups(in Tag stageFeature, params LangSysTable[] langSysTables)
-        {
-            List<(Tag Feature, ushort Index, LookupTable LookupTable)> lookups = new();
-            for (int i = 0; i < langSysTables.Length; i++)
-            {
-                ushort[] featureIndices = langSysTables[i].FeatureIndices;
-                for (int j = 0; j < featureIndices.Length; j++)
-                {
-                    // Modified for Agent DVR: feature and lookup indices come from the font; out-of-range
-                    // ones are skipped rather than throwing.
-                    if (!AdvancedTypographicUtils.TryGetAt(this.FeatureList.FeatureTables, featureIndices[j], out FeatureTable? featureTable))
-                    {
-                        continue;
-                    }
-
-                    Tag feature = featureTable.FeatureTag;
-
-                    if (stageFeature != feature)
-                    {
-                        continue;
-                    }
-
-                    ushort[] lookupListIndices = featureTable.LookupListIndices;
-                    for (int k = 0; k < lookupListIndices.Length; k++)
-                    {
-                        ushort lookupIndex = lookupListIndices[k];
-                        if (AdvancedTypographicUtils.TryGetAt(this.LookupList.LookupTables, lookupIndex, out LookupTable? lookupTable))
-                        {
-                            lookups.Add(new(feature, lookupIndex, lookupTable));
-                        }
-                    }
-                }
-            }
-
-            lookups.Sort((x, y) => x.Index - y.Index);
-            return lookups;
-        }
-
-        private static bool HasFeature(List<TagEntry> glyphFeatures, in Tag feature)
-        {
-            for (int i = 0; i < glyphFeatures.Count; i++)
-            {
-                TagEntry entry = glyphFeatures[i];
-                if (entry.Tag == feature && entry.Enabled)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
     }
 }

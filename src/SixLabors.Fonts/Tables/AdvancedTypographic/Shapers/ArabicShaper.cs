@@ -81,13 +81,15 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
             this.AddFeature(collection, index, count, CcmpTag);
             this.AddFeature(collection, index, count, LoclTag);
 
-            this.AddFeature(collection, index, count, IsolTag, false);
-            this.AddFeature(collection, index, count, FinaTag, false);
-            this.AddFeature(collection, index, count, Fin2Tag, false);
-            this.AddFeature(collection, index, count, Fin3Tag, false);
-            this.AddFeature(collection, index, count, MediTag, false);
-            this.AddFeature(collection, index, count, Med2Tag, false);
-            this.AddFeature(collection, index, count, InitTag, false);
+            // Modified for Agent DVR: each joining form is applied on its own, as HarfBuzz does, now that
+            // other features' lookups are merged.
+            this.AddFeature(collection, index, count, IsolTag, false, standalone: true);
+            this.AddFeature(collection, index, count, FinaTag, false, standalone: true);
+            this.AddFeature(collection, index, count, Fin2Tag, false, standalone: true);
+            this.AddFeature(collection, index, count, Fin3Tag, false, standalone: true);
+            this.AddFeature(collection, index, count, MediTag, false, standalone: true);
+            this.AddFeature(collection, index, count, Med2Tag, false, standalone: true);
+            this.AddFeature(collection, index, count, InitTag, false, standalone: true);
             this.AddFeature(collection, index, count, MsetTag);
         }
 

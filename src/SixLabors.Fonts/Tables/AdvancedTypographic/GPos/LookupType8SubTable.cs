@@ -1,6 +1,7 @@
 // Copyright (c) Six Labors.
 // Licensed under the Apache License, Version 2.0.
 
+using System;
 using System.IO;
 
 namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
@@ -12,6 +13,12 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
     /// Each format can describe one or more chained backtrack, input, and lookahead sequence combinations, and one or more positioning adjustments for glyphs in each input sequence.
     /// <see href="https://docs.microsoft.com/en-us/typography/opentype/spec/gpos#lookuptype-8-chained-contexts-positioning-subtable"/>
     /// </summary>
+    /// <remarks>
+    /// Modified for Agent DVR: all three formats match through the shared context matcher (backtrack
+    /// nearest-first, lookup flags, mark filtering sets and default-ignorables honoured) and apply their
+    /// nested lookups through <see cref="AdvancedTypographicUtils"/>, instead of three inline copies that
+    /// applied each record at index + sequenceIndex regardless of skipped glyphs.
+    /// </remarks>
     internal static class LookupType8SubTable
     {
         public static LookupSubTable Load(BigEndianBinaryReader reader, long offset, LookupFlags lookupFlags)
@@ -57,87 +64,46 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                 int index,
                 int count)
             {
-                // Implements Chained Contexts Substitution, Format 1:
-                // https://docs.microsoft.com/en-us/typography/opentype/spec/gsub#61-chained-contexts-substitution-format-1-simple-glyph-contexts
+                // Implements Chained Contexts Positioning, Format 1:
+                // https://docs.microsoft.com/en-us/typography/opentype/spec/gpos#chained-sequence-context-format-1-simple-glyph-contexts
                 ushort glyphId = collection[index].GlyphId;
                 if (glyphId == 0)
                 {
                     return false;
                 }
 
-                // Search for the current glyph in the Coverage table.
+                // Modified for Agent DVR: bounds-checked coverage index; a NULL rule set means no rules.
                 int offset = this.coverageTable.CoverageIndexOf(glyphId);
-                if (offset <= -1)
+                if (this.seqRuleSetTables is null
+                    || (uint)offset >= (uint)this.seqRuleSetTables.Length
+                    || this.seqRuleSetTables[offset] is not ChainedSequenceRuleSetTable seqRuleSet)
                 {
                     return false;
                 }
 
-                // Modified for Agent DVR: bounds-checked coverage index.
-                if (this.seqRuleSetTables is null || (uint)offset >= (uint)this.seqRuleSetTables.Length)
+                SkippingGlyphIterator iterator = SkippingGlyphIterator.ForContext(fontMetrics, collection, index, this.LookupFlags, this.MarkFilteringSet, feature, index + count);
+                Span<int> positions = stackalloc int[AdvancedTypographicUtils.MaxContextLength];
+                foreach (ChainedSequenceRuleTable rule in seqRuleSet.SequenceRuleTables)
                 {
-                    return false;
-                }
-
-                ChainedSequenceRuleSetTable seqRuleSet = this.seqRuleSetTables[offset];
-                if (seqRuleSet is null)
-                {
-                    return false;
-                }
-
-                // Apply ruleset for the given glyph id.
-                ChainedSequenceRuleTable[] rules = seqRuleSet.SequenceRuleTables;
-                SkippingGlyphIterator iterator = new(fontMetrics, collection, index, this.LookupFlags);
-                for (int lookupIndex = 0; lookupIndex < rules.Length; lookupIndex++)
-                {
-                    ChainedSequenceRuleTable rule = rules[lookupIndex];
-                    if (!AdvancedTypographicUtils.ApplyChainedSequenceRule(iterator, rule))
+                    if (!AdvancedTypographicUtils.MatchChainedRule(
+                        ref iterator,
+                        index,
+                        new GlyphIdMatcher(rule.BacktrackSequence),
+                        rule.BacktrackSequence.Length,
+                        new GlyphIdMatcher(rule.InputSequence),
+                        rule.InputSequence.Length,
+                        new GlyphIdMatcher(rule.LookaheadSequence),
+                        rule.LookaheadSequence.Length,
+                        positions))
                     {
                         continue;
                     }
 
-                    return ApplyNestedLookups(fontMetrics, table, collection, feature, index, rule.SequenceLookupRecords);
+                    return AdvancedTypographicUtils.ApplyLookupList(fontMetrics, table, feature, rule.SequenceLookupRecords, collection, positions, rule.InputSequence.Length + 1, index + count);
                 }
 
                 return false;
             }
-        }
-
-        /// <summary>
-        /// Modified for Agent DVR: applies a matched rule's lookups (formats 1 and 2) with the lookup index
-        /// and position bounds-checked and nesting depth/budget-limited - a malformed or cyclic font threw
-        /// or overflowed the stack here.
-        /// </summary>
-        private static bool ApplyNestedLookups(
-            FontMetrics fontMetrics,
-            GPosTable table,
-            GlyphPositioningCollection collection,
-            Tag feature,
-            int index,
-            SequenceLookupRecord[] records)
-        {
-            bool hasChanged = false;
-            for (int j = 0; j < records.Length; j++)
-            {
-                SequenceLookupRecord sequenceLookupRecord = records[j];
-                int position = index + sequenceLookupRecord.SequenceIndex;
-                if (position >= collection.Count
-                    || !AdvancedTypographicUtils.TryGetAt(table.LookupList.LookupTables, sequenceLookupRecord.LookupListIndex, out LookupTable? lookup)
-                    || !AdvancedTypographicUtils.TryEnterNested())
-                {
-                    continue;
-                }
-
-                try
-                {
-                    hasChanged |= lookup.TryUpdatePosition(fontMetrics, table, collection, feature, position, 1);
-                }
-                finally
-                {
-                    AdvancedTypographicUtils.ExitNested();
-                }
-            }
-
-            return hasChanged;
         }
 
         internal sealed class LookupType8Format2SubTable : LookupSubTable
@@ -185,42 +151,46 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                 int index,
                 int count)
             {
-                // Implements Chained Contexts Substitution for Format 2:
-                // https://docs.microsoft.com/en-us/typography/opentype/spec/gsub#62-chained-contexts-substitution-format-2-class-based-glyph-contexts
+                // Implements Chained Contexts Positioning, Format 2:
+                // https://docs.microsoft.com/en-us/typography/opentype/spec/gpos#chained-sequence-context-format-2-class-based-glyph-contexts
                 ushort glyphId = collection[index].GlyphId;
                 if (glyphId == 0)
                 {
                     return false;
                 }
 
-                // Search for the current glyph in the Coverage table.
-                int offset = this.coverageTable.CoverageIndexOf(glyphId);
-                if (offset <= -1)
+                if (this.coverageTable.CoverageIndexOf(glyphId) < 0)
                 {
                     return false;
                 }
 
-                // Search in the class definition table to find the class value assigned to the currently glyph.
-                int classId = this.inputClassDefinitionTable.ClassIndexOf(glyphId);
                 // Modified for Agent DVR: a NULL rule set (legal) means no rules.
+                int classId = this.inputClassDefinitionTable.ClassIndexOf(glyphId);
                 ChainedClassSequenceRuleTable[]? rules = classId >= 0 && classId < this.sequenceRuleSetTables.Length ? this.sequenceRuleSetTables[classId]?.SubRules : null;
                 if (rules is null)
                 {
                     return false;
                 }
 
-                // Apply ruleset for the given glyph class id.
-                SkippingGlyphIterator iterator = new(fontMetrics, collection, index, this.LookupFlags);
-                for (int lookupIndex = 0; lookupIndex < rules.Length; lookupIndex++)
+                SkippingGlyphIterator iterator = SkippingGlyphIterator.ForContext(fontMetrics, collection, index, this.LookupFlags, this.MarkFilteringSet, feature, index + count);
+                Span<int> positions = stackalloc int[AdvancedTypographicUtils.MaxContextLength];
+                foreach (ChainedClassSequenceRuleTable rule in rules)
                 {
-                    ChainedClassSequenceRuleTable rule = rules[lookupIndex];
-                    if (!AdvancedTypographicUtils.ApplyChainedClassSequenceRule(iterator, rule, this.inputClassDefinitionTable, this.backtrackClassDefinitionTable, this.lookaheadClassDefinitionTable))
+                    if (!AdvancedTypographicUtils.MatchChainedRule(
+                        ref iterator,
+                        index,
+                        new GlyphClassMatcher(rule.BacktrackSequence, this.backtrackClassDefinitionTable),
+                        rule.BacktrackSequence.Length,
+                        new GlyphClassMatcher(rule.InputSequence, this.inputClassDefinitionTable),
+                        rule.InputSequence.Length,
+                        new GlyphClassMatcher(rule.LookaheadSequence, this.lookaheadClassDefinitionTable),
+                        rule.LookaheadSequence.Length,
+                        positions))
                     {
                         continue;
                     }
 
-                    // It's a match. Perform position update and return true if anything changed.
-                    return ApplyNestedLookups(fontMetrics, table, collection, feature, index, rule.SequenceLookupRecords);
+                    return AdvancedTypographicUtils.ApplyLookupList(fontMetrics, table, feature, rule.SequenceLookupRecords, collection, positions, rule.InputSequence.Length + 1, index + count);
                 }
 
                 return false;
@@ -274,38 +244,20 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                     return false;
                 }
 
-                if (!AdvancedTypographicUtils.CheckAllCoverages(fontMetrics, this.LookupFlags, collection, index, count, this.inputCoverageTables, this.backtrackCoverageTables, this.lookaheadCoverageTables))
+                SkippingGlyphIterator iterator = SkippingGlyphIterator.ForContext(fontMetrics, collection, index, this.LookupFlags, this.MarkFilteringSet, feature, index + count);
+                Span<int> positions = stackalloc int[AdvancedTypographicUtils.MaxContextLength];
+                if (!AdvancedTypographicUtils.MatchCoverageContext(
+                    ref iterator,
+                    index,
+                    this.inputCoverageTables,
+                    this.backtrackCoverageTables,
+                    this.lookaheadCoverageTables,
+                    positions))
                 {
                     return false;
                 }
 
-                // It's a match. Perform position update and return true if anything changed.
-                bool hasChanged = false;
-                foreach (SequenceLookupRecord lookupRecord in this.seqLookupRecords)
-                {
-                    ushort sequenceIndex = lookupRecord.SequenceIndex;
-                    ushort lookupIndex = lookupRecord.LookupListIndex;
-
-                    // Modified for Agent DVR: bounds-checked lookup and position, depth/budget-limited nesting.
-                    int position = index + sequenceIndex;
-                    if (position >= collection.Count
-                        || !AdvancedTypographicUtils.TryGetAt(table.LookupList.LookupTables, lookupIndex, out LookupTable? lookup)
-                        || !AdvancedTypographicUtils.TryEnterNested())
-                    {
-                        continue;
-                    }
-
-                    try
-                    {
-                        hasChanged |= lookup.TryUpdatePosition(fontMetrics, table, collection, feature, position, count - sequenceIndex);
-                    }
-                    finally
-                    {
-                        AdvancedTypographicUtils.ExitNested();
-                    }
-                }
-
-                return hasChanged;
+                return AdvancedTypographicUtils.ApplyLookupList(fontMetrics, table, feature, this.seqLookupRecords, collection, positions, this.inputCoverageTables.Length, index + count);
             }
         }
     }

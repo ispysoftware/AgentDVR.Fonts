@@ -296,8 +296,10 @@ namespace SixLabors.Fonts
 
                     if (isDirtyWH)
                     {
-                        m.SetAdvanceWidth((ushort)data.Bounds.Width);
-                        m.SetAdvanceHeight((ushort)data.Bounds.Height);
+                        // Modified for Agent DVR: advances are unsigned; a negative one (cursive attachment
+                        // can pull an advance below zero) is clamped rather than wrapping to ~65535.
+                        m.SetAdvanceWidth((ushort)Math.Clamp(data.Bounds.Width, 0, ushort.MaxValue));
+                        m.SetAdvanceHeight((ushort)Math.Clamp(data.Bounds.Height, 0, ushort.MaxValue));
                     }
                 }
             }

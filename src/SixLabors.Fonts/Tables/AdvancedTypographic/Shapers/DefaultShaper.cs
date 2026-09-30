@@ -85,7 +85,8 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
         protected override void PlanPreprocessingFeatures(IGlyphShapingCollection collection, int index, int count)
         {
             // Add variation Features.
-            this.AddFeature(collection, index, count, RvnrTag);
+            // Modified for Agent DVR: applied before, not merged with, the other features (HarfBuzz pauses after it).
+            this.AddFeature(collection, index, count, RvnrTag, standalone: true);
 
             // Add directional features.
             LayoutMode layoutMode = collection.TextOptions.LayoutMode;
@@ -182,7 +183,8 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
             Tag feature,
             bool enabled = true,
             Action<IGlyphShapingCollection, int, int>? preAction = null,
-            Action<IGlyphShapingCollection, int, int>? postAction = null)
+            Action<IGlyphShapingCollection, int, int>? postAction = null,
+            bool standalone = false)
         {
             if (this.kerningMode == KerningMode.None)
             {
@@ -198,7 +200,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
                 collection.AddShapingFeature(i, new TagEntry(feature, enabled));
             }
 
-            this.shapingStages.Add(new ShapingStage(feature, preAction, postAction));
+            this.shapingStages.Add(new ShapingStage(feature, preAction, postAction, standalone));
         }
 
         public override IEnumerable<ShapingStage> GetShapingStages() => this.shapingStages;

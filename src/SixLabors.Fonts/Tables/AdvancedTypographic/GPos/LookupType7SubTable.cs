@@ -1,6 +1,7 @@
 // Copyright (c) Six Labors.
 // Licensed under the Apache License, Version 2.0.
 
+using System;
 using System.IO;
 
 namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
@@ -67,33 +68,18 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                     return false;
                 }
 
-                // TODO: Check this.
-                // https://docs.microsoft.com/en-us/typography/opentype/spec/gsub#example-7-contextual-substitution-format-1
-                SkippingGlyphIterator iterator = new(fontMetrics, collection, index, this.LookupFlags);
+                // Modified for Agent DVR: context-aware matching with recorded positions (see ApplyLookupList).
+                SkippingGlyphIterator iterator = SkippingGlyphIterator.ForContext(fontMetrics, collection, index, this.LookupFlags, this.MarkFilteringSet, feature, index + count);
+                Span<int> positions = stackalloc int[AdvancedTypographicUtils.MaxContextLength];
                 foreach (SequenceRuleTable ruleTable in ruleSetTable.SequenceRuleTables)
                 {
-                    int remaining = count - 1;
-                    int seqLength = ruleTable.InputSequence.Length;
-                    if (seqLength > remaining)
+                    iterator.Index = index;
+                    if (!AdvancedTypographicUtils.MatchInput(ref iterator, new GlyphIdMatcher(ruleTable.InputSequence), ruleTable.InputSequence.Length, positions))
                     {
                         continue;
                     }
 
-                    if (!AdvancedTypographicUtils.MatchSequence(iterator, 1, ruleTable.InputSequence))
-                    {
-                        continue;
-                    }
-
-                    // It's a match. Perform position update and return true if anything changed.
-                    return AdvancedTypographicUtils.ApplyLookupList(
-                        fontMetrics,
-                        table,
-                        feature,
-                        this.LookupFlags,
-                        ruleTable.SequenceLookupRecords,
-                        collection,
-                        index,
-                        count);
+                    return AdvancedTypographicUtils.ApplyLookupList(fontMetrics, table, feature, ruleTable.SequenceLookupRecords, collection, positions, ruleTable.InputSequence.Length + 1, index + count);
                 }
 
                 return false;
@@ -151,31 +137,17 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                     return false;
                 }
 
-                SkippingGlyphIterator iterator = new(fontMetrics, collection, index, this.LookupFlags);
+                SkippingGlyphIterator iterator = SkippingGlyphIterator.ForContext(fontMetrics, collection, index, this.LookupFlags, this.MarkFilteringSet, feature, index + count);
+                Span<int> positions = stackalloc int[AdvancedTypographicUtils.MaxContextLength];
                 foreach (ClassSequenceRuleTable ruleTable in ruleSetTable.SequenceRuleTables)
                 {
-                    int remaining = count - 1;
-                    int seqLength = ruleTable.InputSequence.Length;
-                    if (seqLength > remaining)
+                    iterator.Index = index;
+                    if (!AdvancedTypographicUtils.MatchInput(ref iterator, new GlyphClassMatcher(ruleTable.InputSequence, this.classDefinitionTable), ruleTable.InputSequence.Length, positions))
                     {
                         continue;
                     }
 
-                    if (!AdvancedTypographicUtils.MatchClassSequence(iterator, 1, ruleTable.InputSequence, this.classDefinitionTable))
-                    {
-                        continue;
-                    }
-
-                    // It's a match. Perform position update and return true if anything changed.
-                    return AdvancedTypographicUtils.ApplyLookupList(
-                        fontMetrics,
-                        table,
-                        feature,
-                        this.LookupFlags,
-                        ruleTable.SequenceLookupRecords,
-                        collection,
-                        index,
-                        count);
+                    return AdvancedTypographicUtils.ApplyLookupList(fontMetrics, table, feature, ruleTable.SequenceLookupRecords, collection, positions, ruleTable.InputSequence.Length + 1, index + count);
                 }
 
                 return false;
@@ -215,21 +187,19 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                     return false;
                 }
 
-                SkippingGlyphIterator iterator = new(fontMetrics, collection, index, this.LookupFlags);
-                if (!AdvancedTypographicUtils.MatchCoverageSequence(iterator, this.coverageTables, 0))
+                if (this.coverageTables.Length == 0 || this.coverageTables[0].CoverageIndexOf(glyphId) < 0)
                 {
                     return false;
                 }
 
-                return AdvancedTypographicUtils.ApplyLookupList(
-                    fontMetrics,
-                    table,
-                    feature,
-                    this.LookupFlags,
-                    this.sequenceLookupRecords,
-                    collection,
-                    index,
-                    count);
+                SkippingGlyphIterator iterator = SkippingGlyphIterator.ForContext(fontMetrics, collection, index, this.LookupFlags, this.MarkFilteringSet, feature, index + count);
+                Span<int> positions = stackalloc int[AdvancedTypographicUtils.MaxContextLength];
+                if (!AdvancedTypographicUtils.MatchInput(ref iterator, new CoverageMatcher(this.coverageTables, 1), this.coverageTables.Length - 1, positions))
+                {
+                    return false;
+                }
+
+                return AdvancedTypographicUtils.ApplyLookupList(fontMetrics, table, feature, this.sequenceLookupRecords, collection, positions, this.coverageTables.Length, index + count);
             }
         }
     }

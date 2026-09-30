@@ -1,6 +1,7 @@
 // Copyright (c) Six Labors.
 // Licensed under the Apache License, Version 2.0.
 
+using System;
 using System.IO;
 
 namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
@@ -108,12 +109,24 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                 }
 
                 // Get the previous mark to attach to.
-                if (index < 1)
+                // Modified for Agent DVR (HarfBuzz): found with the lookup's own mark filtering (mark attachment
+                // type or filtering set) but not its ignore flags, skipping default-ignorables - it took the raw
+                // previous glyph. The ligature test below was also inverted: marks with no ligature id belong to
+                // the same base; marks of the same ligature must share a component.
+                SkippingGlyphIterator iterator = SkippingGlyphIterator.ForContext(
+                    fontMetrics,
+                    collection,
+                    index,
+                    this.LookupFlags & ~(LookupFlags.IgnoreBaseGlyphs | LookupFlags.IgnoreLigatures | LookupFlags.IgnoreMarks),
+                    this.MarkFilteringSet,
+                    feature,
+                    index + count);
+                int prevIdx = iterator.Previous();
+                if (prevIdx < 0)
                 {
                     return false;
                 }
 
-                int prevIdx = index - 1;
                 ushort prevGlyphId = collection[prevIdx].GlyphId;
                 GlyphShapingData prevGlyph = collection[prevIdx];
                 if (!AdvancedTypographicUtils.IsMarkGlyph(fontMetrics, prevGlyphId, prevGlyph))
@@ -121,32 +134,21 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                     return false;
                 }
 
-                // The following logic was borrowed from Harfbuzz,
-                // see: https://github.com/harfbuzz/harfbuzz/blob/3e635cf5e26e33d6210d3092256a49291752deec/src/hb-ot-layout-gpos-table.hh#L2525
                 bool good = false;
                 GlyphShapingData curGlyph = collection[index];
+                int curComponent = Math.Max(0, curGlyph.LigatureComponent);
+                int prevComponent = Math.Max(0, prevGlyph.LigatureComponent);
                 if (curGlyph.LigatureId == prevGlyph.LigatureId)
                 {
-                    if (curGlyph.LigatureId > 0)
-                    {
-                        // Marks belonging to the same base.
-                        good = true;
-                    }
-                    else if (curGlyph.LigatureComponent == prevGlyph.LigatureComponent)
-                    {
-                        // Marks belonging to the same ligature component.
-                        good = true;
-                    }
+                    // Marks belonging to the same base, or to the same ligature component.
+                    good = curGlyph.LigatureId == 0 || curComponent == prevComponent;
                 }
                 else
                 {
                     // If ligature ids don't match, it may be the case that one of the marks
                     // itself is a ligature, in which case match.
-                    if ((curGlyph.LigatureId > 0 && curGlyph.LigatureComponent <= 0)
-                        || (prevGlyph.LigatureId > 0 && prevGlyph.LigatureComponent <= 0))
-                    {
-                        good = true;
-                    }
+                    good = (curGlyph.LigatureId > 0 && curComponent == 0)
+                        || (prevGlyph.LigatureId > 0 && prevComponent == 0);
                 }
 
                 if (!good)

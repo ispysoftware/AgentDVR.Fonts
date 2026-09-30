@@ -119,6 +119,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GSub
             for (int i = 0; i < lookupSubTables.Length; i++)
             {
                 lookupSubTables[i] = LoadLookupSubTable(lookupType, lookupFlags, reader, offset + subTableOffsets[i]);
+                lookupSubTables[i].MarkFilteringSet = markFilteringSet;
             }
 
             return new LookupTable(lookupType, lookupFlags, markFilteringSet, lookupSubTables);
@@ -165,6 +166,12 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GSub
         protected LookupSubTable(LookupFlags lookupFlags) => this.LookupFlags = lookupFlags;
 
         public LookupFlags LookupFlags { get; }
+
+        /// <summary>
+        /// Gets the lookup's mark filtering set (used when <see cref="LookupFlags"/> has UseMarkFilteringSet).
+        /// Modified for Agent DVR: carried to the subtable so its glyph iteration can honour it.
+        /// </summary>
+        public ushort MarkFilteringSet { get; internal set; }
 
         public abstract bool TrySubstitution(
             FontMetrics fontMetrics,

@@ -1,6 +1,7 @@
 // Copyright (c) Six Labors.
 // Licensed under the Apache License, Version 2.0.
 
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using SixLabors.Fonts.Tables.AdvancedTypographic.GPos;
@@ -170,45 +171,58 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
 
                 // Plan positioning features for each glyph.
                 shaper.Plan(collection, index, count);
-                IEnumerable<ShapingStage> shapingStages = shaper.GetShapingStages();
-                SkippingGlyphIterator iterator = new(fontMetrics, collection, index, default);
-                foreach (ShapingStage stage in shapingStages)
+
+                // Modified for Agent DVR: every positioning feature is applied in one pass - lookups merged, each
+                // applied once, in lookup-list order - as the spec and HarfBuzz do (a PairPos lookup shared by
+                // 'dist' and 'kern' was applied twice). Stage actions only act on substitution, so there are
+                // no pauses here. Features come from the language system HarfBuzz would choose.
+                List<Tag> features = new();
+                foreach (ShapingStage stage in shaper.GetShapingStages())
                 {
-                    stage.PreProcessFeature(collection, index, count);
+                    features.Add(stage.FeatureTag);
+                }
 
-                    Tag featureTag = stage.FeatureTag;
-                    if (this.TryGetFeatureLookups(in featureTag, current, out List<(Tag Feature, ushort Index, LookupTable LookupTable)>? lookups))
+                LangSysTable? langSys = AdvancedTypographicUtils.SelectLangSys(this.ScriptList, current);
+                List<FeatureLookup> lookups = AdvancedTypographicUtils.CollectLookups(this.FeatureList, this.LookupList.LookupTables.Length, langSys, features);
+                SkippingGlyphIterator iterator = new(fontMetrics, collection, index, default);
+                foreach (FeatureLookup featureLookup in lookups)
+                {
+                    if (!AdvancedTypographicUtils.TryGetAt(this.LookupList.LookupTables, featureLookup.LookupIndex, out LookupTable? lookupTable))
                     {
-                        // Apply features in order.
-                        foreach ((Tag Feature, ushort Index, LookupTable LookupTable) featureLookup in lookups)
-                        {
-                            Tag feature = featureLookup.Feature;
-                            iterator.Reset(index, featureLookup.LookupTable.LookupFlags);
-
-                            while (iterator.Index < index + count)
-                            {
-                                if (currentOperations++ >= maxOperationsCount)
-                                {
-                                    maxOperationsReached = true;
-                                    goto EndLookups;
-                                }
-
-                                List<TagEntry> glyphFeatures = collection[iterator.Index].Features;
-                                if (!HasFeature(glyphFeatures, in feature))
-                                {
-                                    iterator.Next();
-                                    continue;
-                                }
-
-                                bool success = featureLookup.LookupTable.TryUpdatePosition(fontMetrics, this, collection, featureLookup.Feature, iterator.Index, count - (iterator.Index - index));
-                                kerned |= success && (feature == KernTag || feature == VKernTag);
-                                updated |= success;
-                                iterator.Next();
-                            }
-                        }
+                        continue;
                     }
 
-                    stage.PostProcessFeature(collection, index, count);
+                    // Start at the first glyph the lookup doesn't ignore, and continue where the lookup says
+                    // (after a matched context, or past an adjusted second glyph of a pair).
+                    iterator.Reset(index - 1, lookupTable.LookupFlags, lookupTable.MarkFilteringSet);
+                    iterator.Next();
+                    while (iterator.Index < index + count)
+                    {
+                        if (currentOperations++ >= maxOperationsCount)
+                        {
+                            maxOperationsReached = true;
+                            goto EndLookups;
+                        }
+
+                        if (!featureLookup.TryGetEnabledFeature(collection[iterator.Index].Features, out Tag feature))
+                        {
+                            iterator.Next();
+                            continue;
+                        }
+
+                        AdvancedTypographicUtils.TakeResumeIndex();
+                        bool success = lookupTable.TryUpdatePosition(fontMetrics, this, collection, feature, iterator.Index, count - (iterator.Index - index));
+                        kerned |= success && (feature == KernTag || feature == VKernTag);
+                        updated |= success;
+
+                        int resume = AdvancedTypographicUtils.TakeResumeIndex();
+                        if (resume >= 0)
+                        {
+                            iterator.Index = resume - 1;
+                        }
+
+                        iterator.Next();
+                    }
                 }
 
                 EndLookups:
@@ -217,8 +231,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
                     ZeroMarkAdvances(fontMetrics, collection, index, count);
                 }
 
-                FixCursiveAttachment(collection, index, count);
-                FixMarkAttachment(collection, index, count);
+                PropagateAttachmentOffsets(collection, index, count);
                 UpdatePositions(fontMetrics, collection, index, count);
 
                 if (i >= maxCount || maxOperationsReached)
@@ -228,39 +241,6 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
             }
 
             return updated;
-        }
-
-        private bool TryGetFeatureLookups(
-            in Tag stageFeature,
-            ScriptClass script,
-            [NotNullWhen(true)] out List<(Tag Feature, ushort Index, LookupTable LookupTable)>? value)
-        {
-            if (this.ScriptList is null)
-            {
-                value = null;
-                return false;
-            }
-
-            ScriptListTable scriptListTable = this.ScriptList.Default();
-            Tag[] tags = UnicodeScriptTagMap.Instance[script];
-            for (int i = 0; i < tags.Length; i++)
-            {
-                if (this.ScriptList.TryGetValue(tags[i].Value, out ScriptListTable? table))
-                {
-                    scriptListTable = table;
-                    break;
-                }
-            }
-
-            LangSysTable? defaultLangSysTable = scriptListTable.DefaultLangSysTable;
-            if (defaultLangSysTable != null)
-            {
-                value = this.GetFeatureLookups(stageFeature, defaultLangSysTable);
-                return value.Count > 0;
-            }
-
-            value = this.GetFeatureLookups(stageFeature, scriptListTable.LangSysTables);
-            return value.Count > 0;
         }
 
         private Tag GetUnicodeScriptTag(ScriptClass script)
@@ -282,116 +262,76 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
             return default;
         }
 
-        private List<(Tag Feature, ushort Index, LookupTable LookupTable)> GetFeatureLookups(in Tag stageFeature, params LangSysTable[] langSysTables)
-        {
-            List<(Tag Feature, ushort Index, LookupTable LookupTable)> lookups = new();
-            for (int i = 0; i < langSysTables.Length; i++)
-            {
-                ushort[] featureIndices = langSysTables[i].FeatureIndices;
-                for (int j = 0; j < featureIndices.Length; j++)
-                {
-                    // Modified for Agent DVR: feature and lookup indices come from the font; out-of-range
-                    // ones are skipped rather than throwing.
-                    if (!AdvancedTypographicUtils.TryGetAt(this.FeatureList.FeatureTables, featureIndices[j], out FeatureTable? featureTable))
-                    {
-                        continue;
-                    }
-
-                    Tag feature = featureTable.FeatureTag;
-
-                    if (stageFeature != feature)
-                    {
-                        continue;
-                    }
-
-                    ushort[] lookupListIndices = featureTable.LookupListIndices;
-                    for (int k = 0; k < lookupListIndices.Length; k++)
-                    {
-                        ushort lookupIndex = lookupListIndices[k];
-                        if (AdvancedTypographicUtils.TryGetAt(this.LookupList.LookupTables, lookupIndex, out LookupTable? lookupTable))
-                        {
-                            lookups.Add(new(feature, lookupIndex, lookupTable));
-                        }
-                    }
-                }
-            }
-
-            lookups.Sort((x, y) => x.Index - y.Index);
-            return lookups;
-        }
-
-        private static bool HasFeature(List<TagEntry> glyphFeatures, in Tag feature)
-        {
-            for (int i = 0; i < glyphFeatures.Count; i++)
-            {
-                TagEntry entry = glyphFeatures[i];
-                if (entry.Tag == feature && entry.Enabled)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        private static void FixCursiveAttachment(GlyphPositioningCollection collection, int index, int count)
+        /// <summary>
+        /// Adds to each attached glyph the offset of the glyph it is attached to (cursive and mark attachment).
+        /// Modified for Agent DVR: resolved recursively, parent first, with a depth cap, as HarfBuzz does. The
+        /// cursive pass went in index order, so a chain longer than two glyphs (or one pointing forward, as
+        /// with the RightToLeft flag) got partial offsets, and it compared an absolute index with the run
+        /// length and returned, abandoning the rest of the run.
+        /// </summary>
+        private static void PropagateAttachmentOffsets(GlyphPositioningCollection collection, int index, int count)
         {
             LayoutMode layoutMode = collection.TextOptions.LayoutMode;
-            for (int i = 0; i < count; i++)
+            int end = Math.Min(index + count, collection.Count);
+            for (int i = index; i < end; i++)
             {
-                int currentIndex = i + index;
-                GlyphShapingData data = collection[currentIndex];
-                if (data.CursiveAttachment != -1)
-                {
-                    int j = data.CursiveAttachment + currentIndex;
-                    if (j > count)
-                    {
-                        return;
-                    }
-
-                    GlyphShapingData cursiveData = collection[j];
-                    if (!AdvancedTypographicUtils.IsVerticalGlyph(data.CodePoint, layoutMode))
-                    {
-                        data.Bounds.Y += cursiveData.Bounds.Y;
-                    }
-                    else
-                    {
-                        data.Bounds.X += cursiveData.Bounds.X;
-                    }
-                }
+                PropagateAttachmentOffset(collection, i, layoutMode, AdvancedTypographicUtils.MaxContextLength);
             }
         }
 
-        private static void FixMarkAttachment(GlyphPositioningCollection collection, int index, int count)
+        private static void PropagateAttachmentOffset(GlyphPositioningCollection collection, int i, LayoutMode layoutMode, int depth)
         {
-            for (int i = 0; i < count; i++)
+            GlyphShapingData data = collection[i];
+            if (data.CursiveAttachment != 0)
             {
-                int currentIndex = i + index;
-                GlyphShapingData data = collection[currentIndex];
-                if (data.MarkAttachment != -1)
+                int j = i + data.CursiveAttachment;
+                data.CursiveAttachment = 0;
+                if ((uint)j >= (uint)collection.Count || depth == 0)
                 {
-                    int j = data.MarkAttachment;
-                    GlyphShapingData markData = collection[j];
-                    data.Bounds.X += markData.Bounds.X;
-                    data.Bounds.Y += markData.Bounds.Y;
+                    return;
+                }
 
-                    if (data.Direction == TextDirection.LeftToRight)
+                PropagateAttachmentOffset(collection, j, layoutMode, depth - 1);
+                GlyphShapingData parent = collection[j];
+                if (!AdvancedTypographicUtils.IsVerticalGlyph(data.CodePoint, layoutMode))
+                {
+                    data.Bounds.Y += parent.Bounds.Y;
+                }
+                else
+                {
+                    data.Bounds.X += parent.Bounds.X;
+                }
+            }
+            else if (data.MarkAttachment >= 0)
+            {
+                int j = data.MarkAttachment;
+                data.MarkAttachment = -1;
+                if (j >= i || depth == 0)
+                {
+                    return;
+                }
+
+                PropagateAttachmentOffset(collection, j, layoutMode, depth - 1);
+                GlyphShapingData parent = collection[j];
+                data.Bounds.X += parent.Bounds.X;
+                data.Bounds.Y += parent.Bounds.Y;
+
+                if (data.Direction == TextDirection.LeftToRight)
+                {
+                    for (int k = j; k < i; k++)
                     {
-                        for (int k = j; k < currentIndex; k++)
-                        {
-                            markData = collection[k];
-                            data.Bounds.X -= markData.Bounds.Width;
-                            data.Bounds.Y -= markData.Bounds.Height;
-                        }
+                        GlyphShapingData between = collection[k];
+                        data.Bounds.X -= between.Bounds.Width;
+                        data.Bounds.Y -= between.Bounds.Height;
                     }
-                    else
+                }
+                else
+                {
+                    for (int k = j + 1; k < i + 1; k++)
                     {
-                        for (int k = j + 1; k < currentIndex + 1; k++)
-                        {
-                            markData = collection[k];
-                            data.Bounds.X += markData.Bounds.Width;
-                            data.Bounds.Y += markData.Bounds.Height;
-                        }
+                        GlyphShapingData between = collection[k];
+                        data.Bounds.X += between.Bounds.Width;
+                        data.Bounds.Y += between.Bounds.Height;
                     }
                 }
             }

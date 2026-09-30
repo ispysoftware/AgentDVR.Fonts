@@ -80,122 +80,106 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                 int index,
                 int count)
             {
-                if (count <= 1)
-                {
-                    return false;
-                }
-
                 // Implements Cursive Attachment Positioning Subtable:
                 // https://docs.microsoft.com/en-us/typography/opentype/spec/gpos#lookup-type-3-cursive-attachment-positioning-subtable
+                // Modified for Agent DVR, following HarfBuzz: the current glyph's entry anchor joins the exit
+                // anchor of the previous glyph the lookup sees (it paired this glyph's exit with the raw next
+                // glyph's entry, so a mark between two letters broke the join); the RightToLeft flag decides
+                // which glyph of the pair stays on the baseline the right way round (it was inverted);
+                // "no attachment" is 0 rather than -1, which is also a real link to the previous glyph.
                 ushort glyphId = collection[index].GlyphId;
                 if (glyphId == 0)
                 {
                     return false;
                 }
 
-                int nextIndex = index + 1;
-                ushort nextGlyphId = collection[nextIndex].GlyphId;
-                if (nextGlyphId == 0)
-                {
-                    return false;
-                }
-
-                // Modified for Agent DVR: coverage indexes are bounds-checked against the anchor records.
-                int coverageNext = this.coverageTable.CoverageIndexOf(nextGlyphId);
-                if ((uint)coverageNext >= (uint)this.entryExitAnchors.Length)
-                {
-                    return false;
-                }
-
-                EntryExitAnchors nextRecord = this.entryExitAnchors[coverageNext];
-                AnchorTable? entry = nextRecord.EntryAnchor;
-                if (entry is null)
-                {
-                    return false;
-                }
-
                 int coverage = this.coverageTable.CoverageIndexOf(glyphId);
-                if ((uint)coverage >= (uint)this.entryExitAnchors.Length)
+                if ((uint)coverage >= (uint)this.entryExitAnchors.Length
+                    || this.entryExitAnchors[coverage].EntryAnchor is not AnchorTable entry)
                 {
                     return false;
                 }
 
-                EntryExitAnchors curRecord = this.entryExitAnchors[coverage];
-                AnchorTable? exit = curRecord.ExitAnchor;
-                if (exit is null)
+                SkippingGlyphIterator iterator = SkippingGlyphIterator.ForContext(fontMetrics, collection, index, this.LookupFlags, this.MarkFilteringSet, feature, index + count);
+                int previousIndex = iterator.Previous();
+                if (previousIndex < 0)
                 {
                     return false;
                 }
 
+                int previousCoverage = this.coverageTable.CoverageIndexOf(collection[previousIndex].GlyphId);
+                if ((uint)previousCoverage >= (uint)this.entryExitAnchors.Length
+                    || this.entryExitAnchors[previousCoverage].ExitAnchor is not AnchorTable exit)
+                {
+                    return false;
+                }
+
+                GlyphShapingData previous = collection[previousIndex];
                 GlyphShapingData current = collection[index];
-                GlyphShapingData next = collection[nextIndex];
+                AnchorXY exitXY = exit.GetAnchor(fontMetrics, previous, collection);
+                AnchorXY entryXY = entry.GetAnchor(fontMetrics, current, collection);
 
-                AnchorXY exitXY = exit.GetAnchor(fontMetrics, current, collection);
-                AnchorXY entryXY = entry.GetAnchor(fontMetrics, next, collection);
-
-                bool isVerticalLayout = AdvancedTypographicUtils.IsVerticalGlyph(current.CodePoint, collection.TextOptions.LayoutMode);
-                if (!isVerticalLayout)
+                // Main-direction adjustment.
+                bool horizontal = !AdvancedTypographicUtils.IsVerticalGlyph(current.CodePoint, collection.TextOptions.LayoutMode);
+                if (horizontal)
                 {
-                    // Horizontal
                     if (current.Direction == TextDirection.LeftToRight)
                     {
-                        current.Bounds.Width = exitXY.XCoordinate + current.Bounds.X;
+                        previous.Bounds.Width = exitXY.XCoordinate + previous.Bounds.X;
 
-                        int delta = entryXY.XCoordinate + next.Bounds.X;
-                        next.Bounds.Width -= delta;
-                        next.Bounds.X -= delta;
+                        int delta = entryXY.XCoordinate + current.Bounds.X;
+                        current.Bounds.Width -= delta;
+                        current.Bounds.X -= delta;
                     }
                     else
                     {
-                        int delta = exitXY.XCoordinate + current.Bounds.X;
-                        current.Bounds.Width -= delta;
-                        current.Bounds.X -= delta;
+                        int delta = exitXY.XCoordinate + previous.Bounds.X;
+                        previous.Bounds.Width -= delta;
+                        previous.Bounds.X -= delta;
 
-                        next.Bounds.Width = entryXY.XCoordinate + next.Bounds.X;
+                        current.Bounds.Width = entryXY.XCoordinate + current.Bounds.X;
                     }
                 }
                 else
                 {
-                    // Vertical : Top to bottom
                     if (current.Direction == TextDirection.LeftToRight)
                     {
-                        current.Bounds.Height = exitXY.YCoordinate + current.Bounds.Y;
+                        previous.Bounds.Height = exitXY.YCoordinate + previous.Bounds.Y;
 
-                        int delta = entryXY.YCoordinate + next.Bounds.Y;
-                        next.Bounds.Height -= delta;
-                        next.Bounds.Y -= delta;
+                        int delta = entryXY.YCoordinate + current.Bounds.Y;
+                        current.Bounds.Height -= delta;
+                        current.Bounds.Y -= delta;
                     }
                     else
                     {
-                        int delta = exitXY.YCoordinate + current.Bounds.Y;
-                        current.Bounds.Height -= delta;
-                        current.Bounds.Y -= delta;
+                        int delta = exitXY.YCoordinate + previous.Bounds.Y;
+                        previous.Bounds.Height -= delta;
+                        previous.Bounds.Y -= delta;
 
-                        next.Bounds.Height = entryXY.YCoordinate + next.Bounds.Y;
+                        current.Bounds.Height = entryXY.YCoordinate + current.Bounds.Y;
                     }
                 }
 
-                int child = index;
-                int parent = nextIndex;
+                // Cross-direction adjustment: the child aligns itself against its parent; the root of the chain
+                // stays on the baseline. With RightToLeft the last glyph is the root.
+                int child = previousIndex;
+                int parent = index;
                 int xOffset = entryXY.XCoordinate - exitXY.XCoordinate;
                 int yOffset = entryXY.YCoordinate - exitXY.YCoordinate;
-                if (this.LookupFlags.HasFlag(LookupFlags.RightToLeft))
+                if ((this.LookupFlags & LookupFlags.RightToLeft) == 0)
                 {
-                    (parent, child) = (child, parent);
-
+                    (child, parent) = (parent, child);
                     xOffset = -xOffset;
                     yOffset = -yOffset;
                 }
 
-                // If child was already connected to someone else, walk through its old
-                // chain and reverse the link direction, such that the whole tree of its
-                // previous connection now attaches to new parent.Watch out for case
-                // where new parent is on the path from old chain...
-                bool horizontal = !isVerticalLayout;
-                ReverseCursiveMinorOffset(collection, index, child, horizontal, parent);
+                // If child was already connected to someone else, walk through its old chain and reverse the
+                // link direction, so the whole tree of its previous connection now attaches to the new parent.
+                ReverseCursiveMinorOffset(collection, child, horizontal, parent, AdvancedTypographicUtils.MaxContextLength);
 
                 GlyphShapingData c = collection[child];
                 c.CursiveAttachment = parent - child;
+                c.MarkAttachment = -1;
                 if (horizontal)
                 {
                     c.Bounds.Y = yOffset;
@@ -210,6 +194,14 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                 if (p.CursiveAttachment == -c.CursiveAttachment)
                 {
                     p.CursiveAttachment = 0;
+                    if (horizontal)
+                    {
+                        p.Bounds.Y = 0;
+                    }
+                    else
+                    {
+                        p.Bounds.X = 0;
+                    }
                 }
 
                 return true;
@@ -217,14 +209,14 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
 
             private static void ReverseCursiveMinorOffset(
                 GlyphPositioningCollection collection,
-                int position,
                 int i,
                 bool horizontal,
-                int parent)
+                int newParent,
+                int depth)
             {
                 GlyphShapingData c = collection[i];
                 int chain = c.CursiveAttachment;
-                if (chain <= 0)
+                if (chain == 0 || depth == 0)
                 {
                     return;
                 }
@@ -233,13 +225,13 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
 
                 int j = i + chain;
 
-                // Stop if we see new parent in the chain.
-                if (j == parent)
+                // Stop if we see the new parent in the chain.
+                if (j == newParent || (uint)j >= (uint)collection.Count)
                 {
                     return;
                 }
 
-                ReverseCursiveMinorOffset(collection, position, j, horizontal, parent);
+                ReverseCursiveMinorOffset(collection, j, horizontal, newParent, depth - 1);
 
                 GlyphShapingData p = collection[j];
                 if (horizontal)

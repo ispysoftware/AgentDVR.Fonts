@@ -133,131 +133,173 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GSub
                 return false;
             }
 
+            // Modified for Agent DVR: components are matched with the context matcher (default-ignorables such
+            // as LRM or variation selectors no longer break ligatures; ZWNJ still does), glyphs attached to
+            // different components of an earlier ligature don't ligate, and the ligature id/component
+            // bookkeeping follows HarfBuzz (it was inverted: see Ligate).
             LigatureSetTable ligatureSetTable = this.ligatureSetTables[offset];
-            SkippingGlyphIterator iterator = new(fontMetrics, collection, index, this.LookupFlags);
-            Span<int> matchBuffer = stackalloc int[AdvancedTypographicUtils.MaxContextLength];
-            for (int i = 0; i < ligatureSetTable.Ligatures.Length; i++)
+            SkippingGlyphIterator iterator = SkippingGlyphIterator.ForContext(fontMetrics, collection, index, this.LookupFlags, this.MarkFilteringSet, feature, index + count);
+            Span<int> positions = stackalloc int[AdvancedTypographicUtils.MaxContextLength];
+            foreach (LigatureTable ligatureTable in ligatureSetTable.Ligatures)
             {
-                LigatureTable ligatureTable = ligatureSetTable.Ligatures[i];
-                int remaining = count - 1;
-                int compLength = ligatureTable.ComponentGlyphs.Length;
-                if (compLength > remaining)
+                int componentCount = ligatureTable.ComponentGlyphs.Length;
+                iterator.Index = index;
+                if (!AdvancedTypographicUtils.MatchInput(ref iterator, new LigatureComponentMatcher(ligatureTable.ComponentGlyphs, feature), componentCount, positions)
+                    || !CanLigate(collection, ref iterator, positions.Slice(0, componentCount + 1)))
                 {
                     continue;
                 }
 
-                if (!AdvancedTypographicUtils.MatchInputSequence(iterator, feature, 1, ligatureTable.ComponentGlyphs, matchBuffer))
-                {
-                    continue;
-                }
-
-                // From Harfbuzz:
-                // - If it *is* a mark ligature, we don't allocate a new ligature id, and leave
-                //   the ligature to keep its old ligature id.  This will allow it to attach to
-                //   a base ligature in GPOS.  Eg. if the sequence is: LAM,LAM,SHADDA,FATHA,HEH,
-                //   and LAM,LAM,HEH for a ligature, they will leave SHADDA and FATHA with a
-                //   ligature id and component value of 2.  Then if SHADDA,FATHA form a ligature
-                //   later, we don't want them to lose their ligature id/component, otherwise
-                //   GPOS will fail to correctly position the mark ligature on top of the
-                //   LAM,LAM,HEH ligature. See https://bugzilla.gnome.org/show_bug.cgi?id=676343
-                //
-                // - If a ligature is formed of components that some of which are also ligatures
-                //   themselves, and those ligature components had marks attached to *their*
-                //   components, we have to attach the marks to the new ligature component
-                //   positions!  Now *that*'s tricky!  And these marks may be following the
-                //   last component of the whole sequence, so we should loop forward looking
-                //   for them and update them.
-                //
-                //   Eg. the sequence is LAM,LAM,SHADDA,FATHA,HEH, and the font first forms a
-                //   'calt' ligature of LAM,HEH, leaving the SHADDA and FATHA with a ligature
-                //   id and component == 1.  Now, during 'liga', the LAM and the LAM-HEH ligature
-                //   form a LAM-LAM-HEH ligature.  We need to reassign the SHADDA and FATHA to
-                //   the new ligature with a component value of 2.
-                //
-                //   This in fact happened to a font...  See https://bugzilla.gnome.org/show_bug.cgi?id=437633
-                GlyphShapingData data = collection[index];
-                GlyphShapingClass shapingClass = AdvancedTypographicUtils.GetGlyphShapingClass(fontMetrics, glyphId, data);
-                bool isBaseLigature = shapingClass.IsBase;
-                bool isMarkLigature = shapingClass.IsMark;
-
-                Span<int> matches = matchBuffer.Slice(0, Math.Min(ligatureTable.ComponentGlyphs.Length, matchBuffer.Length));
-                for (int j = 0; j < matches.Length && isMarkLigature; j++)
-                {
-                    GlyphShapingData match = collection[matches[j]];
-                    if (!AdvancedTypographicUtils.IsMarkGlyph(fontMetrics, match.GlyphId, match))
-                    {
-                        isBaseLigature = false;
-                        isMarkLigature = false;
-                        break;
-                    }
-                }
-
-                bool isLigature = !isBaseLigature && !isMarkLigature;
-
-                int ligatureId = isLigature ? 0 : collection.LigatureId++;
-                int lastLigatureId = data.LigatureId;
-                int lastComponentCount = data.CodePointCount;
-                int currentComponentCount = lastComponentCount;
-                int idx = index + 1;
-
-                // Set ligatureID and ligatureComponent on glyphs that were skipped in the matched sequence.
-                // This allows GPOS to attach marks to the correct ligature components.
-                foreach (int matchIndex in matches)
-                {
-                    // Don't assign new ligature components for mark ligatures (see above).
-                    if (isLigature)
-                    {
-                        idx = matchIndex;
-                    }
-                    else
-                    {
-                        while (idx < matchIndex)
-                        {
-                            GlyphShapingData current = collection[idx];
-                            int currentLC = current.LigatureComponent == -1 ? 1 : current.LigatureComponent;
-                            int ligatureComponent = currentComponentCount - lastComponentCount + Math.Min(currentLC, lastComponentCount);
-                            current.LigatureId = ligatureId;
-                            current.LigatureComponent = ligatureComponent;
-
-                            idx++;
-                        }
-                    }
-
-                    GlyphShapingData last = collection[idx];
-                    lastLigatureId = last.LigatureId;
-                    lastComponentCount = last.CodePointCount;
-                    currentComponentCount += lastComponentCount;
-                    idx++; // Skip base glyph
-                }
-
-                // Adjust ligature components for any marks following
-                if (lastLigatureId > 0 && !isLigature)
-                {
-                    // Only check glyphs managed by current shaper.
-                    int followingCount = count - (idx - index);
-                    for (int j = idx; j < followingCount; j++)
-                    {
-                        GlyphShapingData current = collection[j];
-                        if (current.LigatureId == lastLigatureId)
-                        {
-                            int currentLC = current.LigatureComponent == -1 ? 1 : current.LigatureComponent;
-                            int ligatureComponent = currentComponentCount - lastComponentCount + Math.Min(currentLC, lastComponentCount);
-                            current.LigatureId = ligatureId;
-                            current.LigatureComponent = ligatureComponent;
-                        }
-                        else
-                        {
-                            break;
-                        }
-                    }
-                }
-
-                // Delete the matched glyphs, and replace the current glyph with the ligature glyph
-                collection.Replace(index, matches, ligatureTable.GlyphId, ligatureId);
+                Ligate(fontMetrics, collection, positions.Slice(0, componentCount + 1), ligatureTable.GlyphId);
                 return true;
             }
 
             return false;
+        }
+
+        private static int GetLigatureComponent(GlyphShapingData data) => Math.Max(0, data.LigatureComponent);
+
+        /// <summary>
+        /// Ligatures cannot be formed across glyphs attached to different components of an earlier ligature
+        /// (e.g. after LAM,LAM,HEH ligate, the SHADDA and FATHA left between them must not ligate with each
+        /// other), unless that ligature is itself ignored by this lookup. A component not attached to a
+        /// ligature can't join one that is, other than the first glyph's own.
+        /// </summary>
+        private static bool CanLigate(GlyphSubstitutionCollection collection, ref SkippingGlyphIterator iterator, ReadOnlySpan<int> positions)
+        {
+            GlyphShapingData first = collection[positions[0]];
+            int firstLigatureId = first.LigatureId;
+            int firstComponent = GetLigatureComponent(first);
+            int ligatureBase = 0; // 0: not checked, 1: may skip, 2: may not skip.
+
+            for (int k = 1; k < positions.Length; k++)
+            {
+                GlyphShapingData data = collection[positions[k]];
+                int ligatureId = data.LigatureId;
+                int component = GetLigatureComponent(data);
+                if (firstLigatureId != 0 && firstComponent != 0)
+                {
+                    if (firstLigatureId == ligatureId && firstComponent == component)
+                    {
+                        continue;
+                    }
+
+                    if (ligatureBase == 0)
+                    {
+                        // Find the ligature these components belong to, before the first one.
+                        bool found = false;
+                        int j = positions[0];
+                        while (j > 0 && collection[j - 1].LigatureId == firstLigatureId)
+                        {
+                            j--;
+                            if (GetLigatureComponent(collection[j]) == 0)
+                            {
+                                found = true;
+                                break;
+                            }
+                        }
+
+                        ligatureBase = found && iterator.IsIgnored(j) ? 1 : 2;
+                    }
+
+                    if (ligatureBase == 2)
+                    {
+                        return false;
+                    }
+                }
+                else if (ligatureId != 0 && component != 0 && ligatureId != firstLigatureId)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Replaces the matched glyphs with the ligature, keeping mark attachment information usable by GPOS:
+        /// <list type="bullet">
+        /// <item>A ligature of marks, or of a base and marks, keeps the first glyph's ligature id and component
+        /// so it can still attach to an earlier ligature (LAM,LAM,SHADDA,FATHA,HEH: SHADDA+FATHA keep
+        /// component 2 of LAM-LAM-HEH).</item>
+        /// <item>Any other ligature gets a new id, and marks skipped between its components - and marks after it
+        /// that belonged to its last component - are renumbered to the new ligature's components.</item>
+        /// </list>
+        /// </summary>
+        private static void Ligate(FontMetrics fontMetrics, GlyphSubstitutionCollection collection, ReadOnlySpan<int> positions, ushort ligatureGlyphId)
+        {
+            int index = positions[0];
+            GlyphShapingData first = collection[index];
+            GlyphShapingClass firstClass = AdvancedTypographicUtils.GetGlyphShapingClass(fontMetrics, first.GlyphId, first);
+            bool isBaseLigature = firstClass.IsBase;
+            bool isMarkLigature = firstClass.IsMark;
+            int totalComponents = first.LigatureComponentCount;
+            for (int k = 1; k < positions.Length; k++)
+            {
+                GlyphShapingData data = collection[positions[k]];
+                totalComponents += data.LigatureComponentCount;
+                if (!AdvancedTypographicUtils.IsMarkGlyph(fontMetrics, data.GlyphId, data))
+                {
+                    isBaseLigature = false;
+                    isMarkLigature = false;
+                }
+            }
+
+            bool isLigature = !isBaseLigature && !isMarkLigature;
+            int ligatureId = isLigature ? collection.LigatureId++ : 0;
+            int lastLigatureId = first.LigatureId;
+            int lastComponentCount = first.LigatureComponentCount;
+            int componentsSoFar = lastComponentCount;
+
+            for (int k = 1; k < positions.Length; k++)
+            {
+                if (isLigature)
+                {
+                    // Marks skipped between the previous component and this one.
+                    for (int j = positions[k - 1] + 1; j < positions[k]; j++)
+                    {
+                        GlyphShapingData skipped = collection[j];
+                        int component = GetLigatureComponent(skipped);
+                        if (component == 0)
+                        {
+                            component = lastComponentCount;
+                        }
+
+                        skipped.LigatureId = ligatureId;
+                        skipped.LigatureComponent = componentsSoFar - lastComponentCount + Math.Min(component, lastComponentCount);
+                    }
+                }
+
+                GlyphShapingData data = collection[positions[k]];
+                lastLigatureId = data.LigatureId;
+                lastComponentCount = data.LigatureComponentCount;
+                componentsSoFar += lastComponentCount;
+            }
+
+            // Marks following the last component that belonged to its ligature move to the new one.
+            if (!isMarkLigature && lastLigatureId != 0)
+            {
+                for (int j = positions[positions.Length - 1] + 1; j < collection.Count; j++)
+                {
+                    GlyphShapingData data = collection[j];
+                    int component = GetLigatureComponent(data);
+                    if (data.LigatureId != lastLigatureId || component == 0)
+                    {
+                        break;
+                    }
+
+                    data.LigatureId = ligatureId;
+                    data.LigatureComponent = componentsSoFar - lastComponentCount + Math.Min(component, lastComponentCount);
+                }
+            }
+
+            int lastPosition = positions[positions.Length - 1];
+            int removed = positions.Length - 1;
+            collection.Replace(index, positions.Slice(1), ligatureGlyphId, ligatureId, totalComponents);
+
+            // Continue after the last component: marks skipped inside the ligature now follow it and must not
+            // be matched again by this lookup.
+            AdvancedTypographicUtils.SetResumeIndex(lastPosition - removed + 1);
         }
 
         public readonly struct LigatureSetTable

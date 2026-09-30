@@ -229,12 +229,11 @@ namespace SixLabors.Fonts
         /// <param name="glyphId">The replacement glyph id.</param>
         public void Replace(int index, ushort glyphId)
         {
+            // Modified for Agent DVR: a single substitution keeps the glyph's ligature id and component (as
+            // HarfBuzz does) - a mark swapped for a variant after a ligature formed must still attach to its
+            // component of that ligature.
             GlyphShapingData current = this.glyphs[index].Data;
             current.GlyphId = glyphId;
-            current.LigatureId = 0;
-            current.LigatureComponent = -1;
-            current.MarkAttachment = -1;
-            current.CursiveAttachment = -1;
             current.IsSubstituted = true;
         }
 
@@ -244,8 +243,12 @@ namespace SixLabors.Fonts
         /// <param name="index">The zero-based index of the element to replace.</param>
         /// <param name="removalIndices">The indices at which to remove elements.</param>
         /// <param name="glyphId">The replacement glyph id.</param>
-        /// <param name="ligatureId">The ligature id.</param>
-        public void Replace(int index, ReadOnlySpan<int> removalIndices, ushort glyphId, int ligatureId)
+        /// <param name="ligatureId">
+        /// The new ligature id for a ligature of non-mark glyphs, or 0 for a mark or base-plus-marks ligature,
+        /// which keeps the first glyph's ligature id and component.
+        /// </param>
+        /// <param name="componentCount">The ligature's component count (used when <paramref name="ligatureId"/> is not 0).</param>
+        public void Replace(int index, ReadOnlySpan<int> removalIndices, ushort glyphId, int ligatureId, int componentCount)
         {
             // Remove the glyphs at each index.
             int codePointCount = 0;
@@ -260,12 +263,16 @@ namespace SixLabors.Fonts
             GlyphShapingData current = this.glyphs[index].Data;
             current.CodePointCount += codePointCount;
             current.GlyphId = glyphId;
-            current.LigatureId = ligatureId;
             current.IsLigated = true;
-            current.LigatureComponent = -1;
-            current.MarkAttachment = -1;
-            current.CursiveAttachment = -1;
             current.IsSubstituted = true;
+
+            // Modified for Agent DVR: only an ordinary ligature starts a new ligature (HarfBuzz's model).
+            if (ligatureId != 0)
+            {
+                current.LigatureId = ligatureId;
+                current.LigatureComponent = -1;
+                current.LigatureComponentCount = componentCount;
+            }
         }
 
         /// <summary>
@@ -292,7 +299,7 @@ namespace SixLabors.Fonts
             current.LigatureId = 0;
             current.LigatureComponent = -1;
             current.MarkAttachment = -1;
-            current.CursiveAttachment = -1;
+            current.CursiveAttachment = 0;
             current.IsSubstituted = true;
         }
 
@@ -307,10 +314,18 @@ namespace SixLabors.Fonts
             {
                 OffsetGlyphDataPair pair = this.glyphs[index];
                 GlyphShapingData current = pair.Data;
+                // Modified for Agent DVR: the sequence is numbered as components of the glyph it replaced
+                // only when that glyph isn't already part of a ligature (HarfBuzz), so marks keep their
+                // ligature component.
+                bool numberComponents = current.LigatureId == 0;
                 current.GlyphId = glyphIds[0];
-                current.LigatureComponent = 0;
+                if (numberComponents)
+                {
+                    current.LigatureComponent = 0;
+                }
+
                 current.MarkAttachment = -1;
-                current.CursiveAttachment = -1;
+                current.CursiveAttachment = 0;
                 current.IsSubstituted = true;
                 current.IsDecomposed = true;
 
@@ -323,7 +338,7 @@ namespace SixLabors.Fonts
                         GlyphShapingData data = new(current, false)
                         {
                             GlyphId = glyphIds[i],
-                            LigatureComponent = i + 1
+                            LigatureComponent = numberComponents ? i + 1 : current.LigatureComponent
                         };
 
                         this.glyphs.Insert(++index, new(pair.Offset, data));

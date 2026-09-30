@@ -65,6 +65,15 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
             return true;
         }
 
+        /// <summary>
+        /// Modified for Agent DVR: gets a value indicating whether a mark glyph set contains the glyph.
+        /// </summary>
+        /// <param name="markGlyphSet">The mark glyph set index.</param>
+        /// <param name="glyphId">The glyph id.</param>
+        /// <returns><see langword="true"/> if the set covers the glyph.</returns>
+        public bool IsInMarkGlyphSet(ushort markGlyphSet, ushort glyphId)
+            => this.MarkGlyphSetsTable?.Covers(markGlyphSet, glyphId) == true;
+
         public static GlyphDefinitionTable Load(BigEndianBinaryReader reader)
         {
             // Header version 1.0

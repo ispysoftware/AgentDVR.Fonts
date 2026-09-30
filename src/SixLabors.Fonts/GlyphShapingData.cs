@@ -36,6 +36,7 @@ namespace SixLabors.Fonts
             this.LigatureId = data.LigatureId;
             this.IsLigated = data.IsLigated;
             this.LigatureComponent = data.LigatureComponent;
+            this.LigatureComponentCount = data.LigatureComponentCount;
             this.MarkAttachment = data.MarkAttachment;
             this.CursiveAttachment = data.CursiveAttachment;
             this.IsDecomposed = data.IsDecomposed;
@@ -105,14 +106,23 @@ namespace SixLabors.Fonts
         public int LigatureComponent { get; set; } = -1;
 
         /// <summary>
+        /// Gets or sets the number of ligature components this glyph stands for: the component count for a
+        /// ligature formed from non-mark glyphs, otherwise 1.
+        /// Modified for Agent DVR: tracked separately (it was taken from <see cref="CodePointCount"/>, which
+        /// differs whenever a component glyph maps several code points or a code point decomposed).
+        /// </summary>
+        public int LigatureComponentCount { get; set; } = 1;
+
+        /// <summary>
         /// Gets or sets the index of any mark attachment.
         /// </summary>
         public int MarkAttachment { get; set; } = -1;
 
         /// <summary>
-        /// Gets or sets the index of any cursive attachment.
+        /// Gets or sets the offset from this glyph to the glyph it is cursively attached to; 0 for none.
+        /// Modified for Agent DVR: 0 is "none" - it was -1, which is also a real link to the previous glyph.
         /// </summary>
-        public int CursiveAttachment { get; set; } = -1;
+        public int CursiveAttachment { get; set; }
 
         /// <summary>
         /// Gets or sets the collection of features.

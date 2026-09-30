@@ -31,16 +31,42 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
             };
         }
 
+        /// <summary>
+        /// Modified for Agent DVR: finds the second glyph of a pair - the next glyph the lookup doesn't skip.
+        /// </summary>
+        private static bool TryGetSecondGlyph(
+            FontMetrics fontMetrics,
+            GlyphPositioningCollection collection,
+            LookupSubTable subTable,
+            Tag feature,
+            int index,
+            int count,
+            out int index2)
+        {
+            SkippingGlyphIterator iterator = SkippingGlyphIterator.ForContext(fontMetrics, collection, index, subTable.LookupFlags, subTable.MarkFilteringSet, feature, index + count);
+            index2 = iterator.Next();
+            return index2 < iterator.Limit;
+        }
+
+        /// <summary>
+        /// Modified for Agent DVR: when the second glyph was adjusted too, the next pair starts after it
+        /// (HarfBuzz; otherwise it was adjusted again as the first glyph of the next pair).
+        /// </summary>
+        private static void ResumeAfterPair(int index2, bool hasValue2)
+            => AdvancedTypographicUtils.SetResumeIndex(hasValue2 ? index2 + 1 : index2);
+
         internal sealed class LookupType2Format1SubTable : LookupSubTable
         {
             private readonly CoverageTable coverageTable;
             private readonly PairSetTable[] pairSets;
+            private readonly bool hasValue2;
 
-            public LookupType2Format1SubTable(CoverageTable coverageTable, PairSetTable[] pairSets, LookupFlags lookupFlags)
+            public LookupType2Format1SubTable(CoverageTable coverageTable, PairSetTable[] pairSets, LookupFlags lookupFlags, ValueFormat valueFormat2)
                 : base(lookupFlags)
             {
                 this.coverageTable = coverageTable;
                 this.pairSets = pairSets;
+                this.hasValue2 = valueFormat2 != 0;
             }
 
             public static LookupType2Format1SubTable Load(BigEndianBinaryReader reader, long offset, LookupFlags lookupFlags)
@@ -84,7 +110,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
 
                 var coverageTable = CoverageTable.Load(reader, offset + coverageOffset);
 
-                return new LookupType2Format1SubTable(coverageTable, pairSets, lookupFlags);
+                return new LookupType2Format1SubTable(coverageTable, pairSets, lookupFlags, valueFormat2);
             }
 
             public override bool TryUpdatePosition(
@@ -95,49 +121,52 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                 int index,
                 int count)
             {
-                if (count <= 1)
-                {
-                    return false;
-                }
-
                 ushort glyphId = collection[index].GlyphId;
                 if (glyphId == 0)
                 {
                     return false;
                 }
 
-                // Modified for Agent DVR: bounds-checked coverage index.
+                // Modified for Agent DVR: bounds-checked coverage index; the second glyph is found with the
+                // lookup's skipping rules (it was the raw next glyph, so a mark or LRM between the pair stopped
+                // kerning, and an ignored mark could be kerned as the pair).
                 int coverage = this.coverageTable.CoverageIndexOf(glyphId);
-                if ((uint)coverage < (uint)this.pairSets.Length)
+                if ((uint)coverage >= (uint)this.pairSets.Length
+                    || !TryGetSecondGlyph(fontMetrics, collection, this, feature, index, count, out int index2))
                 {
-                    PairSetTable pairSet = this.pairSets[coverage];
-                    ushort glyphId2 = collection[index + 1].GlyphId;
-                    if (glyphId2 == 0)
-                    {
-                        return false;
-                    }
-
-                    if (pairSet.TryGetPairValueRecord(glyphId2, out PairValueRecord pairValueRecord))
-                    {
-                        ValueRecord record1 = pairValueRecord.ValueRecord1;
-                        AdvancedTypographicUtils.ApplyPosition(collection, index, record1);
-
-                        ValueRecord record2 = pairValueRecord.ValueRecord2;
-                        AdvancedTypographicUtils.ApplyPosition(collection, index + 1, record2);
-
-                        return true;
-                    }
+                    return false;
                 }
 
-                return false;
+                ushort glyphId2 = collection[index2].GlyphId;
+                if (glyphId2 == 0 || !this.pairSets[coverage].TryGetPairValueRecord(glyphId2, out PairValueRecord pairValueRecord))
+                {
+                    return false;
+                }
+
+                AdvancedTypographicUtils.ApplyPosition(collection, index, pairValueRecord.ValueRecord1);
+                AdvancedTypographicUtils.ApplyPosition(collection, index2, pairValueRecord.ValueRecord2);
+                ResumeAfterPair(index2, this.hasValue2);
+                return true;
             }
 
             internal sealed class PairSetTable
             {
                 private readonly PairValueRecord[] pairValueRecords;
+                private readonly bool sorted;
 
                 private PairSetTable(PairValueRecord[] pairValueRecords)
-                    => this.pairValueRecords = pairValueRecords;
+                {
+                    this.pairValueRecords = pairValueRecords;
+                    this.sorted = true;
+                    for (int i = 1; i < pairValueRecords.Length; i++)
+                    {
+                        if (pairValueRecords[i].SecondGlyph < pairValueRecords[i - 1].SecondGlyph)
+                        {
+                            this.sorted = false;
+                            break;
+                        }
+                    }
+                }
 
                 public static PairSetTable Load(BigEndianBinaryReader reader, long offset, ValueFormat valueFormat1, ValueFormat valueFormat2)
                 {
@@ -162,12 +191,44 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
 
                 public bool TryGetPairValueRecord(ushort glyphId, [NotNullWhen(true)] out PairValueRecord pairValueRecord)
                 {
-                    foreach (PairValueRecord pair in this.pairValueRecords)
+                    // Modified for Agent DVR: the records are sorted by second glyph (spec), so binary search
+                    // (it scanned linearly for every pair of every kerned run). A font whose records aren't
+                    // sorted is still scanned.
+                    PairValueRecord[] records = this.pairValueRecords;
+                    if (!this.sorted)
                     {
-                        if (pair.SecondGlyph == glyphId)
+                        foreach (PairValueRecord pair in records)
                         {
-                            pairValueRecord = pair;
+                            if (pair.SecondGlyph == glyphId)
+                            {
+                                pairValueRecord = pair;
+                                return true;
+                            }
+                        }
+
+                        pairValueRecord = default;
+                        return false;
+                    }
+
+                    int low = 0;
+                    int high = records.Length - 1;
+                    while (low <= high)
+                    {
+                        int mid = (int)((uint)(low + high) >> 1);
+                        ushort second = records[mid].SecondGlyph;
+                        if (second == glyphId)
+                        {
+                            pairValueRecord = records[mid];
                             return true;
+                        }
+
+                        if (second < glyphId)
+                        {
+                            low = mid + 1;
+                        }
+                        else
+                        {
+                            high = mid - 1;
                         }
                     }
 
@@ -183,19 +244,22 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
             private readonly Class1Record[] class1Records;
             private readonly ClassDefinitionTable classDefinitionTable1;
             private readonly ClassDefinitionTable classDefinitionTable2;
+            private readonly bool hasValue2;
 
             public LookupType2Format2SubTable(
                 CoverageTable coverageTable,
                 Class1Record[] class1Records,
                 ClassDefinitionTable classDefinitionTable1,
                 ClassDefinitionTable classDefinitionTable2,
-                LookupFlags lookupFlags)
+                LookupFlags lookupFlags,
+                ValueFormat valueFormat2)
                 : base(lookupFlags)
             {
                 this.coverageTable = coverageTable;
                 this.class1Records = class1Records;
                 this.classDefinitionTable1 = classDefinitionTable1;
                 this.classDefinitionTable2 = classDefinitionTable2;
+                this.hasValue2 = valueFormat2 != 0;
             }
 
             public static LookupType2Format2SubTable Load(BigEndianBinaryReader reader, long offset, LookupFlags lookupFlags)
@@ -250,7 +314,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                 var classDefTable1 = ClassDefinitionTable.Load(reader, offset + classDef1Offset);
                 var classDefTable2 = ClassDefinitionTable.Load(reader, offset + classDef2Offset);
 
-                return new LookupType2Format2SubTable(coverageTable, class1Records, classDefTable1, classDefTable2, lookupFlags);
+                return new LookupType2Format2SubTable(coverageTable, class1Records, classDefTable1, classDefTable2, lookupFlags, valueFormat2);
             }
 
             public override bool TryUpdatePosition(
@@ -261,11 +325,6 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                 int index,
                 int count)
             {
-                if (count <= 1)
-                {
-                    return false;
-                }
-
                 ushort glyphId = collection[index].GlyphId;
                 if (glyphId == 0)
                 {
@@ -273,10 +332,12 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                 }
 
                 int coverage = this.coverageTable.CoverageIndexOf(glyphId);
-                if (coverage > -1)
+
+                // Modified for Agent DVR: the second glyph follows the lookup's skipping rules (see format 1).
+                if (coverage > -1 && TryGetSecondGlyph(fontMetrics, collection, this, feature, index, count, out int index2))
                 {
                     int classDef1 = this.classDefinitionTable1.ClassIndexOf(glyphId);
-                    ushort glyphId2 = collection[index + 1].GlyphId;
+                    ushort glyphId2 = collection[index2].GlyphId;
                     if (glyphId2 == 0)
                     {
                         return false;
@@ -303,7 +364,8 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                     AdvancedTypographicUtils.ApplyPosition(collection, index, record1);
 
                     ValueRecord record2 = class2Record.ValueRecord2;
-                    AdvancedTypographicUtils.ApplyPosition(collection, index + 1, record2);
+                    AdvancedTypographicUtils.ApplyPosition(collection, index2, record2);
+                    ResumeAfterPair(index2, this.hasValue2);
 
                     return true;
                 }

@@ -102,7 +102,13 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GSub
 
             if ((uint)offset < (uint)this.sequenceTables.Length)
             {
-                collection.Replace(index, this.sequenceTables[offset].SubstituteGlyphs);
+                ushort[] substitutes = this.sequenceTables[offset].SubstituteGlyphs;
+                collection.Replace(index, substitutes);
+
+                // Modified for Agent DVR: continue after the output, as HarfBuzz does, rather than applying this
+                // lookup again to the glyphs it just produced (a sequence starting with its own input glyph
+                // repeated until the collection limit was hit).
+                AdvancedTypographicUtils.SetResumeIndex(index + substitutes.Length);
                 return true;
             }
 

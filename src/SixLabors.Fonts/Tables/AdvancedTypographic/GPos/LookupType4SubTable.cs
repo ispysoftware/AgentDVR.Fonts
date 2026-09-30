@@ -1,6 +1,7 @@
 // Copyright (c) Six Labors.
 // Licensed under the Apache License, Version 2.0.
 
+using System;
 using System.IO;
 
 namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
@@ -106,19 +107,24 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                 }
 
                 // Search backward for a base glyph.
-                int baseGlyphIndex = index;
-                while (--baseGlyphIndex >= 0)
+                // Modified for Agent DVR (HarfBuzz): marks and default-ignorables are skipped with the skipping
+                // iterator, and of a multiple-substitution sequence only the first glyph takes marks - unless a
+                // mark sits inside the sequence. It walked raw indices and skipped every glyph with a ligature
+                // component, including glyphs that were never part of a decomposition.
+                SkippingGlyphIterator iterator = SkippingGlyphIterator.ForContext(fontMetrics, collection, index, LookupFlags.IgnoreMarks, 0, feature, index + count);
+                int baseGlyphIndex;
+                while (true)
                 {
-                    GlyphShapingData data = collection[baseGlyphIndex];
-                    if (!AdvancedTypographicUtils.IsMarkGlyph(fontMetrics, data.GlyphId, data) && !(data.LigatureComponent > 0))
+                    baseGlyphIndex = iterator.Previous();
+                    if (baseGlyphIndex < 0)
+                    {
+                        return false;
+                    }
+
+                    if (AcceptsMarks(fontMetrics, collection, baseGlyphIndex))
                     {
                         break;
                     }
-                }
-
-                if (baseGlyphIndex < 0)
-                {
-                    return false;
                 }
 
                 ushort baseGlyphId = collection[baseGlyphIndex].GlyphId;
@@ -138,6 +144,23 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                 AdvancedTypographicUtils.ApplyAnchor(fontMetrics, collection, index, baseAnchor, markRecord, baseGlyphIndex);
 
                 return true;
+            }
+
+            // Of the glyphs a multiple substitution produced, only the first takes marks, unless the glyph before
+            // this one isn't the previous glyph of the same sequence (e.g. a mark inside it).
+            private static bool AcceptsMarks(FontMetrics fontMetrics, GlyphPositioningCollection collection, int index)
+            {
+                GlyphShapingData data = collection[index];
+                if (!data.IsDecomposed || data.LigatureComponent <= 0 || index == 0)
+                {
+                    return true;
+                }
+
+                GlyphShapingData previous = collection[index - 1];
+                return AdvancedTypographicUtils.IsMarkGlyph(fontMetrics, previous.GlyphId, previous)
+                    || !previous.IsDecomposed
+                    || previous.LigatureId != data.LigatureId
+                    || Math.Max(0, previous.LigatureComponent) + 1 != data.LigatureComponent;
             }
         }
     }

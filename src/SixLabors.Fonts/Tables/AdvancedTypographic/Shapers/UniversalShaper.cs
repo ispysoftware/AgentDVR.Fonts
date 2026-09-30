@@ -245,24 +245,28 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
                 FontMetrics fontMetrics = this.fontMetrics;
                 if (type == "broken_cluster" && fontMetrics.TryGetGlyphId(new(DottedCircle), out ushort id))
                 {
-                    // Insert after possible Repha.
+                    // Insert before the first glyph that isn't a Repha.
+                    // Modified for Agent DVR: the search lagged one glyph behind (so with a Repha it duplicated
+                    // or overwrote the wrong glyph), the circle went after the broken character instead of
+                    // before it, and it inherited that character's code point and category (it is a base, B).
                     int i = start;
-                    GlyphShapingData current = substitutionCollection[i];
-                    for (i = start; i < end; i++)
+                    while (i < end - 1 && substitutionCollection[i].UniversalShapingEngineInfo?.Category == "R")
                     {
-                        if (current.UniversalShapingEngineInfo?.Category != "R")
-                        {
-                            break;
-                        }
-
-                        current = substitutionCollection[i];
+                        i++;
                     }
 
                     Span<ushort> glyphs = stackalloc ushort[2];
-                    glyphs[0] = current.GlyphId;
-                    glyphs[1] = id;
+                    glyphs[0] = id;
+                    glyphs[1] = substitutionCollection[i].GlyphId;
 
+                    // Replace keeps the existing glyph data at i (now the circle) and clones it after.
                     substitutionCollection.Replace(i, glyphs);
+
+                    GlyphShapingData dotted = substitutionCollection[i];
+                    dotted.CodePoint = new CodePoint(DottedCircle);
+                    UniversalShapingEngineInfo? brokenInfo = substitutionCollection[i + 1].UniversalShapingEngineInfo;
+                    dotted.UniversalShapingEngineInfo = brokenInfo is null ? null : new("B", brokenInfo.SyllableType, brokenInfo.Syllable);
+
                     end++;
                     max++;
                 }

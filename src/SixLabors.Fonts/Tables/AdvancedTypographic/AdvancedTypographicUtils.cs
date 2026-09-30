@@ -34,6 +34,13 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
         [ThreadStatic]
         private static int nestedOperationsLeft;
 
+        [ThreadStatic]
+        private static int resumeIndexPlusOne;
+
+        private static readonly Tag[] FallbackScriptTags = { Tag.Parse("DFLT"), Tag.Parse("dflt"), Tag.Parse("latn") };
+
+        private static readonly Tag DefaultLanguageTag = Tag.Parse("dflt");
+
         /// <summary>
         /// Gets a value indicating whether the glyph represented by the codepoint should be interpreted vertically.
         /// </summary>
@@ -99,6 +106,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
         {
             nestingLevel = 0;
             nestedOperationsLeft = maxOperations;
+            resumeIndexPlusOne = 0;
         }
 
         /// <summary>
@@ -144,30 +152,323 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
             return false;
         }
 
+        /// <summary>
+        /// Modified for Agent DVR: selects the language system to take features from, as HarfBuzz does: the
+        /// script's own tags, then DFLT, dflt and latn; within the script a 'dflt' LangSys record, then the
+        /// default LangSys; otherwise none. It used the first script in the font when the text's script was
+        /// missing (arab lookups on Latin text, say), and with no default LangSys it mixed the features of
+        /// every language together, applying shared lookups more than once.
+        /// </summary>
+        /// <param name="scriptList">The script list.</param>
+        /// <param name="script">The text's script.</param>
+        /// <returns>The language system, or null for none.</returns>
+        public static LangSysTable? SelectLangSys(ScriptList? scriptList, ScriptClass script)
+        {
+            if (scriptList is null)
+            {
+                return null;
+            }
+
+            ScriptListTable? scriptTable = null;
+            foreach (Tag tag in UnicodeScriptTagMap.Instance[script])
+            {
+                if (scriptList.TryGetValue(tag, out ScriptListTable? table))
+                {
+                    scriptTable = table;
+                    break;
+                }
+            }
+
+            if (scriptTable is null)
+            {
+                foreach (Tag tag in FallbackScriptTags)
+                {
+                    if (scriptList.TryGetValue(tag, out ScriptListTable? table))
+                    {
+                        scriptTable = table;
+                        break;
+                    }
+                }
+            }
+
+            if (scriptTable is null)
+            {
+                return null;
+            }
+
+            foreach (LangSysTable langSys in scriptTable.LangSysTables)
+            {
+                if (langSys.LangSysTag == DefaultLanguageTag.Value)
+                {
+                    return langSys;
+                }
+            }
+
+            return scriptTable.DefaultLangSysTable;
+        }
+
+        /// <summary>
+        /// Modified for Agent DVR: collects the lookups of a group of features, each lookup once and in lookup
+        /// list order (the order the spec and HarfBuzz apply them in), with the features that reference it.
+        /// Features were applied one at a time in registration order, so a lookup two features shared (Indic
+        /// and USE register both 'dist' and 'kern') was applied twice, and lookups ordered across features
+        /// ran out of order.
+        /// </summary>
+        /// <param name="featureList">The feature list.</param>
+        /// <param name="lookupCount">The number of lookups in the lookup list.</param>
+        /// <param name="langSys">The selected language system.</param>
+        /// <param name="features">The features.</param>
+        /// <returns>The lookups, sorted by index.</returns>
+        public static List<FeatureLookup> CollectLookups(FeatureListTable featureList, int lookupCount, LangSysTable? langSys, IReadOnlyList<Tag> features)
+        {
+            List<FeatureLookup> lookups = new();
+            if (langSys is null || features.Count == 0)
+            {
+                return lookups;
+            }
+
+            Dictionary<ushort, FeatureLookup>? byIndex = null;
+            foreach (ushort featureIndex in langSys.FeatureIndices)
+            {
+                if (!TryGetAt(featureList.FeatureTables, featureIndex, out FeatureTable? featureTable))
+                {
+                    continue;
+                }
+
+                Tag tag = featureTable.FeatureTag;
+                bool requested = false;
+                for (int i = 0; i < features.Count; i++)
+                {
+                    if (features[i] == tag)
+                    {
+                        requested = true;
+                        break;
+                    }
+                }
+
+                if (!requested)
+                {
+                    continue;
+                }
+
+                foreach (ushort lookupIndex in featureTable.LookupListIndices)
+                {
+                    if (lookupIndex >= lookupCount)
+                    {
+                        continue;
+                    }
+
+                    byIndex ??= new Dictionary<ushort, FeatureLookup>();
+                    if (!byIndex.TryGetValue(lookupIndex, out FeatureLookup? lookup))
+                    {
+                        lookup = new FeatureLookup(lookupIndex);
+                        byIndex.Add(lookupIndex, lookup);
+                        lookups.Add(lookup);
+                    }
+
+                    lookup.AddFeature(tag);
+                }
+            }
+
+            lookups.Sort((x, y) => x.LookupIndex.CompareTo(y.LookupIndex));
+            return lookups;
+        }
+
+        /// <summary>
+        /// Modified for Agent DVR: records where the main lookup loop should continue after the lookup just
+        /// applied (after a matched context, a pair whose second glyph was adjusted, or a multiple
+        /// substitution's output). Ignored inside nested lookups.
+        /// </summary>
+        /// <param name="index">The index to continue at.</param>
+        public static void SetResumeIndex(int index)
+        {
+            if (nestingLevel == 0)
+            {
+                resumeIndexPlusOne = index + 1;
+            }
+        }
+
+        /// <summary>
+        /// Modified for Agent DVR: takes the index recorded by <see cref="SetResumeIndex"/>, or -1.
+        /// </summary>
+        /// <returns>The index, or -1 if none was recorded.</returns>
+        public static int TakeResumeIndex()
+        {
+            int index = resumeIndexPlusOne - 1;
+            resumeIndexPlusOne = 0;
+            return index;
+        }
+
+        /// <summary>
+        /// Matches the input sequence of a contextual rule. The glyph at the iterator's index is the first
+        /// input glyph (the caller has checked it); <paramref name="length"/> more follow.
+        /// Modified for Agent DVR: the matched positions are recorded, so nested lookups apply to the glyphs
+        /// that actually matched rather than to a re-count that disagreed with the matching.
+        /// </summary>
+        /// <typeparam name="TMatcher">The matcher type.</typeparam>
+        /// <param name="iterator">A context iterator positioned on the first input glyph.</param>
+        /// <param name="matcher">The matcher for the remaining input glyphs.</param>
+        /// <param name="length">The number of input glyphs after the first.</param>
+        /// <param name="positions">Receives the indices of all input glyphs, the first included.</param>
+        /// <returns><see langword="true"/> if the input matched.</returns>
+        public static bool MatchInput<TMatcher>(ref SkippingGlyphIterator iterator, TMatcher matcher, int length, Span<int> positions)
+            where TMatcher : struct, IGlyphMatcher
+        {
+            if (length + 1 > positions.Length)
+            {
+                return false;
+            }
+
+            positions[0] = iterator.Index;
+            for (int i = 0; i < length; i++)
+            {
+                if (!iterator.TryMatchNext(1, ref matcher, i))
+                {
+                    return false;
+                }
+
+                positions[i + 1] = iterator.Index;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Modified for Agent DVR: matches a backtrack sequence, which the font stores nearest-first: element 0
+        /// is compared with the glyph just before <paramref name="index"/>. It was compared farthest-first,
+        /// so any rule with two or more backtrack glyphs matched the wrong context.
+        /// </summary>
+        /// <typeparam name="TMatcher">The matcher type.</typeparam>
+        /// <param name="iterator">A context iterator.</param>
+        /// <param name="index">The first input glyph.</param>
+        /// <param name="matcher">The backtrack matcher.</param>
+        /// <param name="length">The backtrack length.</param>
+        /// <returns><see langword="true"/> if the backtrack matched.</returns>
+        public static bool MatchBacktrack<TMatcher>(ref SkippingGlyphIterator iterator, int index, TMatcher matcher, int length)
+            where TMatcher : struct, IGlyphMatcher
+        {
+            iterator.Index = index;
+            for (int i = 0; i < length; i++)
+            {
+                if (!iterator.TryMatchNext(-1, ref matcher, i))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Matches a lookahead sequence, starting after the last input glyph.
+        /// </summary>
+        /// <typeparam name="TMatcher">The matcher type.</typeparam>
+        /// <param name="iterator">A context iterator.</param>
+        /// <param name="lastInput">The last input glyph.</param>
+        /// <param name="matcher">The lookahead matcher.</param>
+        /// <param name="length">The lookahead length.</param>
+        /// <returns><see langword="true"/> if the lookahead matched.</returns>
+        public static bool MatchLookahead<TMatcher>(ref SkippingGlyphIterator iterator, int lastInput, TMatcher matcher, int length)
+            where TMatcher : struct, IGlyphMatcher
+        {
+            iterator.Index = lastInput;
+            for (int i = 0; i < length; i++)
+            {
+                if (!iterator.TryMatchNext(1, ref matcher, i))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Matches a chained context rule: input (after the first glyph), backtrack and lookahead.
+        /// </summary>
+        /// <typeparam name="TBacktrack">The backtrack matcher type.</typeparam>
+        /// <typeparam name="TInput">The input matcher type.</typeparam>
+        /// <typeparam name="TLookahead">The lookahead matcher type.</typeparam>
+        /// <param name="iterator">A context iterator.</param>
+        /// <param name="index">The first input glyph.</param>
+        /// <param name="backtrack">The backtrack matcher.</param>
+        /// <param name="backtrackLength">The backtrack length.</param>
+        /// <param name="input">The matcher for the input glyphs after the first.</param>
+        /// <param name="inputLength">The number of input glyphs after the first.</param>
+        /// <param name="lookahead">The lookahead matcher.</param>
+        /// <param name="lookaheadLength">The lookahead length.</param>
+        /// <param name="positions">Receives the input glyph indices.</param>
+        /// <returns><see langword="true"/> if the rule matched.</returns>
+        public static bool MatchChainedRule<TBacktrack, TInput, TLookahead>(
+            ref SkippingGlyphIterator iterator,
+            int index,
+            TBacktrack backtrack,
+            int backtrackLength,
+            TInput input,
+            int inputLength,
+            TLookahead lookahead,
+            int lookaheadLength,
+            Span<int> positions)
+            where TBacktrack : struct, IGlyphMatcher
+            where TInput : struct, IGlyphMatcher
+            where TLookahead : struct, IGlyphMatcher
+        {
+            iterator.Index = index;
+            if (!MatchInput(ref iterator, input, inputLength, positions))
+            {
+                return false;
+            }
+
+            int lastInput = iterator.Index;
+            return MatchBacktrack(ref iterator, index, backtrack, backtrackLength)
+                && MatchLookahead(ref iterator, lastInput, lookahead, lookaheadLength);
+        }
+
+        /// <summary>
+        /// Applies the nested lookups of a matched GSUB contextual rule.
+        /// Modified for Agent DVR (following the spec and HarfBuzz):
+        /// <list type="bullet">
+        /// <item>each record applies at the glyph matched for its sequence index, and the positions are
+        /// corrected as nested lookups add or remove glyphs;</item>
+        /// <item>a matched rule finishes the lookup at this glyph even if nothing changed (it returned
+        /// "changed", so later subtables still ran after a match);</item>
+        /// <item>the main loop continues after the matched input instead of re-running over it;</item>
+        /// <item>nesting is depth/budget-limited and lookup indices are bounds-checked.</item>
+        /// </list>
+        /// </summary>
+        /// <param name="fontMetrics">The font.</param>
+        /// <param name="table">The GSUB table.</param>
+        /// <param name="feature">The feature being applied.</param>
+        /// <param name="records">The rule's lookup records.</param>
+        /// <param name="collection">The glyphs.</param>
+        /// <param name="positions">The matched input positions (updated in place).</param>
+        /// <param name="matchLength">The number of input glyphs.</param>
+        /// <param name="runEnd">The exclusive end of the run.</param>
+        /// <returns>Always <see langword="true"/>: the rule matched.</returns>
         public static bool ApplyLookupList(
             FontMetrics fontMetrics,
             GSubTable table,
             Tag feature,
-            LookupFlags lookupFlags,
             SequenceLookupRecord[] records,
             GlyphSubstitutionCollection collection,
-            int index,
-            int count)
+            Span<int> positions,
+            int matchLength,
+            int runEnd)
         {
-            bool hasChanged = false;
-            SkippingGlyphIterator iterator = new(fontMetrics, collection, index, lookupFlags);
-            int currentCount = collection.Count;
-
+            int count = matchLength;
+            int end = positions[count - 1] + 1;
             foreach (SequenceLookupRecord lookupRecord in records)
             {
-                ushort sequenceIndex = lookupRecord.SequenceIndex;
-                ushort lookupIndex = lookupRecord.LookupListIndex;
-                iterator.Index = index;
-                iterator.Increment(sequenceIndex);
+                int idx = lookupRecord.SequenceIndex;
+                if (idx >= count)
+                {
+                    continue;
+                }
 
-                // Modified for Agent DVR: bounds-checked lookup and position, depth/budget-limited nesting.
-                if (iterator.Index >= collection.Count
-                    || !TryGetAt(table.LookupList.LookupTables, lookupIndex, out GSub.LookupTable? lookup)
+                int position = positions[idx];
+                int originalLength = collection.Count;
+                if (position >= originalLength
+                    || !TryGetAt(table.LookupList.LookupTables, lookupRecord.LookupListIndex, out GSub.LookupTable? lookup)
                     || !TryEnterNested())
                 {
                     continue;
@@ -175,46 +476,96 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
 
                 try
                 {
-                    hasChanged |= lookup.TrySubstitution(fontMetrics, table, collection, feature, iterator.Index, count - (iterator.Index - index));
+                    lookup.TrySubstitution(fontMetrics, table, collection, feature, position, Math.Max(1, runEnd - position));
                 }
                 finally
                 {
                     ExitNested();
                 }
 
-                // Account for substitutions changing the length of the collection.
-                if (collection.Count != currentCount)
+                int delta = collection.Count - originalLength;
+                if (delta == 0)
                 {
-                    count -= currentCount - collection.Count;
-                    currentCount = collection.Count;
+                    continue;
+                }
+
+                runEnd += delta;
+
+                // The nested lookup changed the glyph count. As in HarfBuzz, added glyphs are taken to follow
+                // the current position, and removed glyphs to be the match positions after it.
+                end += delta;
+                if (end < position)
+                {
+                    delta += position - end;
+                    end = position;
+                }
+
+                int next = idx + 1;
+                if (delta > 0)
+                {
+                    if (count + delta > positions.Length)
+                    {
+                        break;
+                    }
+                }
+                else
+                {
+                    delta = Math.Max(delta, next - count);
+                    next -= delta;
+                }
+
+                positions.Slice(next, count - next).CopyTo(positions.Slice(next + delta));
+                next += delta;
+                count += delta;
+
+                for (int j = idx + 1; j < next; j++)
+                {
+                    positions[j] = positions[j - 1] + 1;
+                }
+
+                for (; next < count; next++)
+                {
+                    positions[next] += delta;
                 }
             }
 
-            return hasChanged;
+            SetResumeIndex(end);
+            return true;
         }
 
+        /// <summary>
+        /// Applies the nested lookups of a matched GPOS contextual rule (see the GSUB overload).
+        /// </summary>
+        /// <param name="fontMetrics">The font.</param>
+        /// <param name="table">The GPOS table.</param>
+        /// <param name="feature">The feature being applied.</param>
+        /// <param name="records">The rule's lookup records.</param>
+        /// <param name="collection">The glyphs.</param>
+        /// <param name="positions">The matched input positions.</param>
+        /// <param name="matchLength">The number of input glyphs.</param>
+        /// <param name="runEnd">The exclusive end of the run.</param>
+        /// <returns>Always <see langword="true"/>: the rule matched.</returns>
         public static bool ApplyLookupList(
             FontMetrics fontMetrics,
             GPosTable table,
             Tag feature,
-            LookupFlags lookupFlags,
             SequenceLookupRecord[] records,
             GlyphPositioningCollection collection,
-            int index,
-            int count)
+            ReadOnlySpan<int> positions,
+            int matchLength,
+            int runEnd)
         {
-            bool hasChanged = false;
-            SkippingGlyphIterator iterator = new(fontMetrics, collection, index, lookupFlags);
             foreach (SequenceLookupRecord lookupRecord in records)
             {
-                ushort sequenceIndex = lookupRecord.SequenceIndex;
-                ushort lookupIndex = lookupRecord.LookupListIndex;
-                iterator.Index = index;
-                iterator.Increment(sequenceIndex);
+                int idx = lookupRecord.SequenceIndex;
+                if (idx >= matchLength)
+                {
+                    continue;
+                }
 
-                // Modified for Agent DVR: bounds-checked lookup and position, depth/budget-limited nesting.
-                if (iterator.Index >= collection.Count
-                    || !TryGetAt(table.LookupList.LookupTables, lookupIndex, out LookupTable? lookup)
+                int position = positions[idx];
+                if (position >= collection.Count
+                    || !TryGetAt(table.LookupList.LookupTables, lookupRecord.LookupListIndex, out LookupTable? lookup)
                     || !TryEnterNested())
                 {
                     continue;
@@ -222,7 +573,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
 
                 try
                 {
-                    hasChanged |= lookup.TryUpdatePosition(fontMetrics, table, collection, feature, iterator.Index, count - (iterator.Index - index));
+                    lookup.TryUpdatePosition(fontMetrics, table, collection, feature, position, Math.Max(1, runEnd - position));
                 }
                 finally
                 {
@@ -230,154 +581,43 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
                 }
             }
 
-            return hasChanged;
-        }
-
-        public static bool MatchInputSequence(SkippingGlyphIterator iterator, Tag feature, ushort increment, ushort[] sequence, Span<int> matches)
-            => Match(
-                increment,
-                sequence,
-                iterator,
-                (component, data) =>
-                {
-                    if (!ContainsFeatureTag(data.Features, feature))
-                    {
-                        return false;
-                    }
-
-                    return component == data.GlyphId;
-                },
-                matches);
-
-        private static bool ContainsFeatureTag(List<TagEntry> featureList, Tag feature)
-        {
-            foreach (TagEntry tagEntry in featureList)
-            {
-                if (tagEntry.Tag == feature && tagEntry.Enabled)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        public static bool MatchSequence(SkippingGlyphIterator iterator, int increment, ushort[] sequence)
-            => Match(
-                increment,
-                sequence,
-                iterator,
-                (component, data) => component == data.GlyphId,
-                default);
-
-        public static bool MatchClassSequence(
-            SkippingGlyphIterator iterator,
-            int increment,
-            ushort[] sequence,
-            ClassDefinitionTable classDefinitionTable)
-            => Match(
-                increment,
-                sequence,
-                iterator,
-                (component, data) => component == classDefinitionTable.ClassIndexOf(data.GlyphId),
-                default);
-
-        public static bool MatchCoverageSequence(
-            SkippingGlyphIterator iterator,
-            CoverageTable[] coverageTable,
-            int increment)
-            => Match(
-                increment,
-                coverageTable,
-                iterator,
-                (component, data) => component.CoverageIndexOf(data.GlyphId) >= 0,
-                default);
-
-        public static bool ApplyChainedSequenceRule(SkippingGlyphIterator iterator, ChainedSequenceRuleTable rule)
-        {
-            if (rule.BacktrackSequence.Length > 0
-                && !MatchSequence(iterator, -rule.BacktrackSequence.Length, rule.BacktrackSequence))
-            {
-                return false;
-            }
-
-            if (rule.InputSequence.Length > 0
-                && !MatchSequence(iterator, 1, rule.InputSequence))
-            {
-                return false;
-            }
-
-            if (rule.LookaheadSequence.Length > 0
-                && !MatchSequence(iterator, 1 + rule.InputSequence.Length, rule.LookaheadSequence))
-            {
-                return false;
-            }
-
+            SetResumeIndex(positions[matchLength - 1] + 1);
             return true;
         }
 
-        public static bool ApplyChainedClassSequenceRule(
-            SkippingGlyphIterator iterator,
-            ChainedClassSequenceRuleTable rule,
-            ClassDefinitionTable inputClassDefinitionTable,
-            ClassDefinitionTable backtrackClassDefinitionTable,
-            ClassDefinitionTable lookaheadClassDefinitionTable)
-        {
-            if (rule.BacktrackSequence.Length > 0
-                && !MatchClassSequence(iterator, -rule.BacktrackSequence.Length, rule.BacktrackSequence, backtrackClassDefinitionTable))
-            {
-                return false;
-            }
-
-            if (rule.InputSequence.Length > 0 &&
-                !MatchClassSequence(iterator, 1, rule.InputSequence, inputClassDefinitionTable))
-            {
-                return false;
-            }
-
-            if (rule.LookaheadSequence.Length > 0
-                && !MatchClassSequence(iterator, 1 + rule.InputSequence.Length, rule.LookaheadSequence, lookaheadClassDefinitionTable))
-            {
-                return false;
-            }
-
-            return true;
-        }
-
-        public static bool CheckAllCoverages(
-            FontMetrics fontMetrics,
-            LookupFlags lookupFlags,
-            IGlyphShapingCollection collection,
+        /// <summary>
+        /// Matches a coverage-based chained context (format 3): the input coverages include the first glyph.
+        /// </summary>
+        /// <param name="iterator">A context iterator.</param>
+        /// <param name="index">The first input glyph.</param>
+        /// <param name="input">The input coverages.</param>
+        /// <param name="backtrack">The backtrack coverages, nearest first.</param>
+        /// <param name="lookahead">The lookahead coverages.</param>
+        /// <param name="positions">Receives the input glyph indices.</param>
+        /// <returns><see langword="true"/> if the context matched.</returns>
+        public static bool MatchCoverageContext(
+            ref SkippingGlyphIterator iterator,
             int index,
-            int count,
             CoverageTable[] input,
             CoverageTable[] backtrack,
-            CoverageTable[] lookahead)
+            CoverageTable[] lookahead,
+            Span<int> positions)
         {
-            // Check that there are enough context glyphs.
-            if (index - backtrack.Length < 0 || input.Length + lookahead.Length > count)
+            if (input.Length == 0 || input[0].CoverageIndexOf(iterator.Collection[index].GlyphId) < 0)
             {
                 return false;
             }
 
-            // Check all coverages: if any of them does not match, abort update.
-            SkippingGlyphIterator iterator = new(fontMetrics, collection, index, lookupFlags);
-            if (!MatchCoverageSequence(iterator, backtrack, -backtrack.Length))
-            {
-                return false;
-            }
-
-            if (!MatchCoverageSequence(iterator, input, 0))
-            {
-                return false;
-            }
-
-            if (!MatchCoverageSequence(iterator, lookahead, input.Length))
-            {
-                return false;
-            }
-
-            return true;
+            return MatchChainedRule(
+                ref iterator,
+                index,
+                new CoverageMatcher(backtrack),
+                backtrack.Length,
+                new CoverageMatcher(input, 1),
+                input.Length - 1,
+                new CoverageMatcher(lookahead),
+                lookahead.Length,
+                positions);
         }
 
         public static void ApplyAnchor(
@@ -397,6 +637,9 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
             markData.Bounds.X = baseXY.XCoordinate - markXY.XCoordinate;
             markData.Bounds.Y = baseXY.YCoordinate - markXY.YCoordinate;
             markData.MarkAttachment = baseGlyphIndex;
+
+            // Modified for Agent DVR: a glyph has one attachment; the mark attachment replaces any cursive one.
+            markData.CursiveAttachment = 0;
         }
 
         public static void ApplyPosition(
@@ -411,21 +654,18 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
             current.Bounds.Y += record.YPlacement;
         }
 
+        /// <summary>
+        /// Gets a value indicating whether the glyph is a mark.
+        /// Modified for Agent DVR: same classification as <see cref="GetGlyphShapingClass"/>. Without GDEF glyph
+        /// classes it returned false for every glyph (a null class never equals MarkGlyph), so mark searches
+        /// and mark-advance zeroing never saw combining marks in such fonts.
+        /// </summary>
+        /// <param name="fontMetrics">The font.</param>
+        /// <param name="glyphId">The glyph id.</param>
+        /// <param name="shapingData">The glyph.</param>
+        /// <returns><see langword="true"/> if the glyph is a mark.</returns>
         public static bool IsMarkGlyph(FontMetrics fontMetrics, ushort glyphId, GlyphShapingData shapingData)
-        {
-            if (!fontMetrics.TryGetGlyphClass(glyphId, out GlyphClassDef? glyphClass) &&
-                !CodePoint.IsMark(shapingData.CodePoint))
-            {
-                return false;
-            }
-
-            if (glyphClass != GlyphClassDef.MarkGlyph)
-            {
-                return false;
-            }
-
-            return true;
-        }
+            => GetGlyphShapingClass(fontMetrics, glyphId, shapingData).IsMark;
 
         public static GlyphShapingClass GetGlyphShapingClass(FontMetrics fontMetrics, ushort glyphId, GlyphShapingData shapingData)
         {
@@ -445,50 +685,75 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
             }
             else
             {
-                // TODO: We may have to store each codepoint. FontKit checks all.
-                isMark = CodePoint.IsMark(shapingData.CodePoint);
+                // Modified for Agent DVR: without GDEF glyph classes, only non-spacing marks count as marks
+                // (as HarfBuzz synthesizes them). Spacing marks (Mc, e.g. Indic vowel signs) and enclosing
+                // marks have advances; treating them as marks let mark-advance zeroing collapse them.
+                CodePoint codePoint = shapingData.CodePoint;
+                isMark = CodePoint.GetGeneralCategory(codePoint) == System.Globalization.UnicodeCategory.NonSpacingMark
+                    && !UnicodeUtility.IsDefaultIgnorableCodePoint((uint)codePoint.Value);
                 isBase = !isMark;
                 isLigature = shapingData.CodePointCount > 1;
             }
 
             return new GlyphShapingClass(isMark, isBase, isLigature, markAttachmentType);
         }
+    }
 
-        private static bool Match<T>(
-            int increment,
-            T[] sequence,
-            SkippingGlyphIterator iterator,
-            Func<T, GlyphShapingData, bool> condition,
-            Span<int> matches)
+    /// <summary>
+    /// Modified for Agent DVR: a lookup to apply, with the features that reference it.
+    /// </summary>
+    internal sealed class FeatureLookup
+    {
+        private Tag[] features = Array.Empty<Tag>();
+
+        public FeatureLookup(ushort lookupIndex) => this.LookupIndex = lookupIndex;
+
+        public ushort LookupIndex { get; }
+
+        public void AddFeature(Tag feature)
         {
-            int position = iterator.Index;
-            int offset = iterator.Increment(increment);
-            IGlyphShapingCollection collection = iterator.Collection;
-
-            if (offset < 0)
+            if (this.HasFeature(feature))
             {
-                return false;
+                return;
             }
 
-            int i = 0;
-            while (i < sequence.Length && i < MaxContextLength && offset < collection.Count)
+            Array.Resize(ref this.features, this.features.Length + 1);
+            this.features[this.features.Length - 1] = feature;
+        }
+
+        public bool HasFeature(Tag feature)
+        {
+            foreach (Tag tag in this.features)
             {
-                if (!condition(sequence[i], collection[offset]))
+                if (tag == feature)
                 {
-                    break;
+                    return true;
                 }
-
-                if (matches.Length == MaxContextLength)
-                {
-                    matches[i] = iterator.Index;
-                }
-
-                i++;
-                offset = iterator.Next();
             }
 
-            iterator.Index = position;
-            return i == sequence.Length;
+            return false;
+        }
+
+        /// <summary>
+        /// Gets the first of this lookup's features that is enabled on a glyph.
+        /// </summary>
+        /// <param name="glyphFeatures">The glyph's features.</param>
+        /// <param name="feature">The feature.</param>
+        /// <returns><see langword="true"/> if the lookup applies to the glyph.</returns>
+        public bool TryGetEnabledFeature(List<TagEntry> glyphFeatures, out Tag feature)
+        {
+            for (int i = 0; i < glyphFeatures.Count; i++)
+            {
+                TagEntry entry = glyphFeatures[i];
+                if (entry.Enabled && this.HasFeature(entry.Tag))
+                {
+                    feature = entry.Tag;
+                    return true;
+                }
+            }
+
+            feature = default;
+            return false;
         }
     }
 }

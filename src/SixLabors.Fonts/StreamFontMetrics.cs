@@ -187,6 +187,16 @@ namespace SixLabors.Fonts
         }
 
         /// <inheritdoc/>
+        internal override bool IsInMarkGlyphSet(ushort markGlyphSet, ushort glyphId)
+        {
+            GlyphDefinitionTable? gdef = this.outlineType == OutlineType.TrueType
+                ? this.trueTypeFontTables!.Gdef
+                : this.compactFontTables!.Gdef;
+
+            return gdef is not null && gdef.IsInMarkGlyphSet(markGlyphSet, glyphId);
+        }
+
+        /// <inheritdoc/>
         public override bool TryGetGlyphMetrics(
             CodePoint codePoint,
             TextAttributes textAttributes,
