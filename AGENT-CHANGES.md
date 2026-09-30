@@ -50,3 +50,8 @@ Modified by iSpyConnect / The Playful Group for Agent DVR. Changes from v1.0.1:
   signed on its own, putting outlines off by a unit that accumulated); a charstring that draws
   nothing has empty bounds (the unset float seeds cast to short - +/-32767 on .NET 11); glyph ids
   past the glyph count are empty glyphs; a font with no CFF table fails at load, not at draw time.
+- Default-ignorable characters (LRM/RLM and other bidi controls, ZWJ/ZWNJ/ZWSP, variation
+  selectors, BOM, soft hyphen) take no space after positioning, as in HarfBuzz; they were already
+  not drawn but kept their glyph's advance, leaving gaps (e.g. in .NET right-to-left date strings).
+  They still take part in substitution and positioning, and a glyph a lookup substituted keeps its
+  advance.

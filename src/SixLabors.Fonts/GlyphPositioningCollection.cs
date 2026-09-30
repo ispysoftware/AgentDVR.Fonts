@@ -293,6 +293,37 @@ namespace SixLabors.Fonts
         }
 
         /// <summary>
+        /// Modified for Agent DVR: default-ignorable code points (bidi marks such as LRM/RLM, ZWJ/ZWNJ,
+        /// ZWSP, variation selectors, BOM, soft hyphen...) take no space once positioning is done, as
+        /// HarfBuzz does. They were already not drawn, but kept the font's advance for their glyph, leaving
+        /// visible gaps - e.g. in .NET date strings for right-to-left cultures, which contain LRM/RLM.
+        /// They stay in the run through substitution and positioning so joining/ligature context still
+        /// sees them, and a glyph a lookup substituted keeps its advance.
+        /// </summary>
+        /// <param name="fontMetrics">The font whose glyphs were just positioned.</param>
+        internal void HideDefaultIgnorables(FontMetrics fontMetrics)
+        {
+            for (int i = 0; i < this.glyphs.Count; i++)
+            {
+                GlyphPositioningData glyph = this.glyphs[i];
+                GlyphShapingData data = glyph.Data;
+                if (data.IsSubstituted || !GlyphMetrics.ShouldSkipGlyphRendering(data.CodePoint))
+                {
+                    continue;
+                }
+
+                foreach (GlyphMetrics m in glyph.Metrics)
+                {
+                    if (m.FontMetrics == fontMetrics)
+                    {
+                        m.SetAdvanceWidth(0);
+                        m.SetAdvanceHeight(0);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
         /// Updates the advanced metrics of the glyphs at the given index and id,
         /// adding dx and dy to the current advance.
         /// </summary>

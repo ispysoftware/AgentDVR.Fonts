@@ -320,6 +320,9 @@ namespace SixLabors.Fonts
                     }
                 }
             }
+
+            // Modified for Agent DVR: invisible format characters take no space (see HideDefaultIgnorables).
+            collection.HideDefaultIgnorables(this);
         }
 
         /// <summary>
