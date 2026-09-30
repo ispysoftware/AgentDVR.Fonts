@@ -21,14 +21,26 @@ namespace SixLabors.Fonts.Tables.TrueType.Glyphs
             this.instructions = instructions;
         }
 
+        // Modified for Agent DVR: the TrueType spec's largest legal maxComponentDepth. Deeper means a
+        // malformed (e.g. self-referencing) composite; it renders empty instead of overflowing the stack.
+        private const int MaxCompositeDepth = 16;
+
         public override GlyphVector CreateGlyph(GlyphTable table)
+            => this.CreateGlyph(table, 0);
+
+        public GlyphVector CreateGlyph(GlyphTable table, int compositeDepth)
         {
+            if (compositeDepth >= MaxCompositeDepth)
+            {
+                return GlyphVector.Empty(this.bounds);
+            }
+
             List<ControlPoint> controlPoints = new();
             List<ushort> endPoints = new();
             for (int i = 0; i < this.composites.Length; i++)
             {
                 Composite composite = this.composites[i];
-                var clone = GlyphVector.DeepClone(table.GetGlyph(composite.GlyphIndex));
+                var clone = GlyphVector.DeepClone(table.GetGlyph(composite.GlyphIndex, compositeDepth + 1));
                 GlyphVector.TransformInPlace(ref clone, composite.Transformation);
                 ushort endPointOffset = (ushort)controlPoints.Count;
 

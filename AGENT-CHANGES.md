@@ -17,3 +17,8 @@ Modified by iSpyConnect / The Playful Group for Agent DVR. Changes from v1.0.1:
   so whitespace/newline/render-skip decisions could come from a different character (every
   unmapped character shares glyph 0). The per-layout clone now takes the real code point; the
   cache stays one entry per glyph. `ArrayBuilder(int)` no longer starts "full" of defaults.
+- Malformed fonts can no longer overflow the stack (which kills the process): composite glyphs
+  are limited to the TrueType maximum nesting of 16 and CFF subroutine calls to the Type 2 limit
+  of 10, and glyph ids and subroutine indexes are bounds-checked. Over-limit parts render empty.
+- Empty `glyf` entries (spaces etc.) get empty bounds instead of glyph 0's (.notdef) bounds;
+  the shared re-entrancy flag that tried to protect that lookup was not thread-safe.

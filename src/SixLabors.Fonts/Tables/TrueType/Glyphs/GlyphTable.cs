@@ -18,7 +18,27 @@ namespace SixLabors.Fonts.Tables.TrueType.Glyphs
 
         // TODO: Make this non-virtual
         internal virtual GlyphVector GetGlyph(int index)
-            => this.loaders[index].CreateGlyph(this);
+            => this.GetGlyph(index, 0);
+
+        /// <summary>
+        /// Modified for Agent DVR: bounds-checked, and composite nesting is tracked so a self-referencing
+        /// or cyclic composite degrades to an empty outline instead of overflowing the stack.
+        /// </summary>
+        /// <param name="index">The glyph id.</param>
+        /// <param name="compositeDepth">The number of composite glyphs above this one.</param>
+        /// <returns>The outline, or an empty one for an out-of-range id.</returns>
+        internal GlyphVector GetGlyph(int index, int compositeDepth)
+        {
+            if ((uint)index >= (uint)this.loaders.Length)
+            {
+                return GlyphVector.Empty();
+            }
+
+            GlyphLoader loader = this.loaders[index];
+            return loader is CompositeGlyphLoader composite
+                ? composite.CreateGlyph(this, compositeDepth)
+                : loader.CreateGlyph(this);
+        }
 
         public static GlyphTable Load(FontReader reader)
         {

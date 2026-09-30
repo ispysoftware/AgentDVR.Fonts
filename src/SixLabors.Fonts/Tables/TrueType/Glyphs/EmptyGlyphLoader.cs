@@ -5,24 +5,14 @@ namespace SixLabors.Fonts.Tables.TrueType.Glyphs
 {
     internal class EmptyGlyphLoader : GlyphLoader
     {
-        private bool loop;
-        private readonly Bounds fallbackEmptyBounds;
-        private GlyphVector? glyph;
+        private readonly GlyphVector glyph;
 
         public EmptyGlyphLoader(Bounds fallbackEmptyBounds)
-            => this.fallbackEmptyBounds = fallbackEmptyBounds;
+            => this.glyph = GlyphVector.Empty(fallbackEmptyBounds);
 
-        public override GlyphVector CreateGlyph(GlyphTable table)
-        {
-            if (this.loop)
-            {
-                this.glyph ??= GlyphVector.Empty(this.fallbackEmptyBounds);
-                return this.glyph.Value;
-            }
-
-            this.loop = true;
-            this.glyph ??= GlyphVector.Empty(table.GetGlyph(0).Bounds);
-            return this.glyph.Value;
-        }
+        // Modified for Agent DVR: a zero-length glyf entry has no ink, so it gets empty bounds (measuring
+        // falls back to the advance). It used to borrow glyph 0's bounds, which gave spaces and other
+        // empty glyphs the .notdef box, behind a shared re-entrancy flag that wasn't thread-safe.
+        public override GlyphVector CreateGlyph(GlyphTable table) => this.glyph;
     }
 }

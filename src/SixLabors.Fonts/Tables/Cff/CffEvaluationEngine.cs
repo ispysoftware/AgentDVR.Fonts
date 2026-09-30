@@ -97,7 +97,12 @@ namespace SixLabors.Fonts.Tables.Cff
             }
         }
 
-        private void Parse(ReadOnlySpan<byte> buffer)
+        // Modified for Agent DVR: Type 2 charstrings allow at most 10 nested subroutine calls (Appendix B).
+        // Deeper - i.e. a cyclic program - or an out-of-range subroutine index is skipped instead of
+        // overflowing the stack or throwing; the rest of the charstring still renders.
+        private const int MaxSubroutineDepth = 10;
+
+        private void Parse(ReadOnlySpan<byte> buffer, int depth = 0)
         {
             SimpleBinaryReader reader = new(buffer);
             bool endCharEncountered = false;
@@ -187,11 +192,13 @@ namespace SixLabors.Fonts.Tables.Cff
 
                         case Type2Operator1.Callsubr:
                             index = (int)this.stack.Pop() + this.localBias;
-                            subr = this.localSubrBuffers[index];
-
-                            if (subr.Length > 0)
+                            if (depth < MaxSubroutineDepth && (uint)index < (uint)this.localSubrBuffers.Length)
                             {
-                                this.Parse(subr);
+                                subr = this.localSubrBuffers[index];
+                                if (subr.Length > 0)
+                                {
+                                    this.Parse(subr, depth + 1);
+                                }
                             }
 
                             break;
@@ -357,11 +364,13 @@ namespace SixLabors.Fonts.Tables.Cff
                         case Type2Operator1.Callgsubr:
 
                             index = (int)this.stack.Pop() + this.globalBias;
-                            subr = this.globalSubrBuffers[index];
-
-                            if (subr.Length > 0)
+                            if (depth < MaxSubroutineDepth && (uint)index < (uint)this.globalSubrBuffers.Length)
                             {
-                                this.Parse(subr);
+                                subr = this.globalSubrBuffers[index];
+                                if (subr.Length > 0)
+                                {
+                                    this.Parse(subr, depth + 1);
+                                }
                             }
 
                             break;
