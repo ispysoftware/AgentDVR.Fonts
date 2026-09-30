@@ -45,9 +45,11 @@ namespace SixLabors.Fonts.Tables.Cff
             FontDict[] fontDicts = this.ReadFDArray(reader, topDictionary.CidFontInfo);
 
             CffPrivateDictionary? privateDictionary = this.ReadPrivateDict(reader);
-            CffGlyphData[] glyphs = this.ReadCharStringsIndex(reader, topDictionary, globalSubrRawBuffers, fontDicts, privateDictionary);
+            CffGlyphSet glyphs = this.ReadCharStringsIndex(reader, topDictionary, globalSubrRawBuffers, fontDicts, privateDictionary);
 
-            this.ReadCharsets(reader, stringIndex, glyphs);
+            // Modified for Agent DVR: the charset (glyph names) is no longer read - nothing used the names,
+            // and the reader misread fonts using the predefined charsets (offsets 0-2) and threw on
+            // unknown formats.
             this.ReadEncodings(reader);
 
             return new(fontName, topDictionary, glyphs);
@@ -307,122 +309,6 @@ namespace SixLabors.Fonts.Tables.Cff
             }
         }
 
-        private void ReadCharsets(BigEndianBinaryReader reader, string[] stringIndex, CffGlyphData[] glyphs)
-        {
-            // Charset data is located via the offset operand to the
-            // charset operator in the Top DICT.
-
-            // Each charset is described by a format-
-            // type identifier byte followed by format-specific data.
-            // Three formats are currently defined as shown in Tables
-            // 17, 18, and 20.
-            reader.BaseStream.Position = this.offset + this.charsetOffset;
-            switch (reader.ReadByte())
-            {
-                default:
-                    throw new NotSupportedException();
-                case 0:
-                    this.ReadCharsetsFormat0(reader, stringIndex, glyphs);
-                    break;
-                case 1:
-                    this.ReadCharsetsFormat1(reader, stringIndex, glyphs);
-                    break;
-                case 2:
-                    this.ReadCharsetsFormat2(reader, stringIndex, glyphs);
-                    break;
-            }
-        }
-
-        private void ReadCharsetsFormat0(BigEndianBinaryReader reader, string[] stringIndex, CffGlyphData[] glyphs)
-        {
-            // Table 17: Format 0
-            // Type     Name                Description
-            // Card8     format             =0
-            // SID       glyph[nGlyphs-1]   Glyph name array
-
-            // Each element of the glyph array represents the name of the
-            // corresponding glyph. This format should be used when the SIDs
-            // are in a fairly random order. The number of glyphs (nGlyphs) is
-            // the value of the count field in the
-            // CharStrings INDEX. (There is
-            // one less element in the glyph name array than nGlyphs because
-            // the .notdef glyph name is omitted.)
-            for (int i = 1; i < glyphs.Length; ++i)
-            {
-                ref CffGlyphData data = ref glyphs[i];
-                data.GlyphName = this.GetSid(reader.ReadUInt16(), stringIndex);
-            }
-        }
-
-        private void ReadCharsetsFormat1(BigEndianBinaryReader reader, string[] stringIndex, CffGlyphData[] glyphs)
-        {
-            // Table 18 Format 1
-            // Type     Name                Description
-            // Card8        format              =1
-            // struct   Range1[<varies>]    Range1 array (see Table  19)
-
-            // Table 19 Range1 Format (Charset)
-            // Type      Name          Description
-            // SID       first         First glyph in range
-            // Card8     nLeft         Glyphs left in range(excluding first)
-
-            // Each Range1 describes a group of sequential SIDs. The number
-            // of ranges is not explicitly specified in the font. Instead, software
-            // utilizing this data simply processes ranges until all glyphs in the
-            // font are covered. This format is particularly suited to charsets
-            // that are well ordered
-            for (int i = 1; i < glyphs.Length;)
-            {
-                int sid = reader.ReadUInt16(); // First glyph in range
-                int count = reader.ReadByte() + 1; // since it does not include first element.
-                do
-                {
-                    ref CffGlyphData data = ref glyphs[i];
-                    data.GlyphName = this.GetSid(sid, stringIndex);
-
-                    count--;
-                    i++;
-                    sid++;
-                }
-                while (count > 0);
-            }
-        }
-
-        private void ReadCharsetsFormat2(BigEndianBinaryReader reader, string[] stringIndex, CffGlyphData[] glyphs)
-        {
-            // note:eg, Adobe's source-code-pro font
-
-            // Table 20 Format 2
-            // Type          Name              Description
-            // Card8         format            2
-            // struct        Range2[<varies>]  Range2 array (see Table 21)
-            //
-            //-----------------------------------------------
-            // Table 21 Range2 Format
-            // Type          Name             Description
-            // SID           first            First glyph in range
-            // Card16        nLeft            Glyphs left in range (excluding first)
-            //-----------------------------------------------
-
-            // Format 2 differs from format 1 only in the size of the nLeft field in each range.
-            // This format is most suitable for fonts with a large well - ordered charset — for example, for Asian CIDFonts.
-            for (int i = 1; i < glyphs.Length;)
-            {
-                int sid = reader.ReadUInt16(); // First glyph in range
-                int count = reader.ReadUInt16() + 1; // since it does not include first element.
-                do
-                {
-                    ref CffGlyphData data = ref glyphs[i];
-                    data.GlyphName = this.GetSid(sid, stringIndex);
-
-                    count--;
-                    i++;
-                    sid++;
-                }
-                while (count > 0);
-            }
-        }
-
         private void ReadFDSelect(BigEndianBinaryReader reader, CidFontInfo cidFontInfo)
         {
             if (cidFontInfo.FDSelect == 0)
@@ -434,12 +320,10 @@ namespace SixLabors.Fonts.Tables.Cff
             switch (reader.ReadByte())
             {
                 case 0:
+                    // One byte per glyph. The count is the glyph count, which isn't known yet; CIDCount
+                    // bounds it, and ReadBytes stops at the end of the data.
                     cidFontInfo.FdSelectFormat = 0;
-                    for (int i = 0; i < cidFontInfo.CIDFountCount; i++)
-                    {
-                        cidFontInfo.FdSelectMap[i] = reader.ReadByte();
-                    }
-
+                    cidFontInfo.FdSelect0 = reader.ReadBytes(Math.Max(0, cidFontInfo.CIDFountCount));
                     break;
 
                 case 3:
@@ -536,7 +420,7 @@ namespace SixLabors.Fonts.Tables.Cff
             return fontDicts;
         }
 
-        private CffGlyphData[] ReadCharStringsIndex(
+        private CffGlyphSet ReadCharStringsIndex(
             BigEndianBinaryReader reader,
             CffTopDictionary topDictionary,
             byte[][] globalSubrBuffers,
@@ -579,36 +463,61 @@ namespace SixLabors.Fonts.Tables.Cff
                 throw new InvalidFontFileException("No glyph data found.");
             }
 
+            // Modified for Agent DVR: read the INDEX's object data as one block and hand out glyphs as views
+            // into it on request (CffGlyphSet), instead of copying each charstring into its own array and
+            // building every CffGlyphData at load. INDEX offsets count from the byte before the data.
             int glyphCount = offsets.Length;
-            var glyphs = new CffGlyphData[glyphCount];
-            byte[][]? localSubBuffer = privateDictionary?.LocalSubrRawBuffers;
-
-            // Is the font a CID font?
-            FDRangeProvider fdRangeProvider = new(topDictionary.CidFontInfo);
-            bool isCidFont = topDictionary.CidFontInfo.FdRanges.Length > 0;
-
+            int dataLength = Math.Max(0, offsets[glyphCount - 1].Start + offsets[glyphCount - 1].Length - 1);
+            byte[] charStrings = reader.ReadBytes(dataLength);
+            int[] starts = new int[glyphCount + 1];
             for (int i = 0; i < glyphCount; ++i)
             {
-                CffIndexOffset offset = offsets[i];
-                byte[] charstringsBuffer = reader.ReadBytes(offset.Length);
-
-                // Now we can parse the raw glyph instructions
-                if (isCidFont)
-                {
-                    // Select  proper local private dict
-                    fdRangeProvider.SetCurrentGlyphIndex((ushort)i);
-                    localSubBuffer = fontDicts[fdRangeProvider.SelectedFDArray].LocalSubr;
-                }
-
-                glyphs[i] = new CffGlyphData(
-                    (ushort)i,
-                    globalSubrBuffers,
-                    localSubBuffer ?? Array.Empty<byte[]>(),
-                    privateDictionary?.NominalWidthX ?? 0,
-                    charstringsBuffer);
+                starts[i] = offsets[i].Start - 1;
             }
 
-            return glyphs;
+            starts[glyphCount] = dataLength;
+
+            return new CffGlyphSet(
+                charStrings,
+                starts,
+                globalSubrBuffers,
+                privateDictionary?.LocalSubrRawBuffers ?? Array.Empty<byte[]>(),
+                fontDicts,
+                BuildFdSelect(topDictionary.CidFontInfo, fontDicts.Length, glyphCount),
+                privateDictionary?.NominalWidthX ?? 0);
+        }
+
+        /// <summary>
+        /// Modified for Agent DVR: the font DICT index of each glyph of a CID font (null otherwise), from
+        /// either FDSelect format. Format 0 fonts weren't treated as CID fonts at all before, so their glyphs
+        /// ran without local subroutines; a CID font with an FDArray but no FDSelect uses font DICT 0.
+        /// </summary>
+        private static byte[]? BuildFdSelect(CidFontInfo cid, int fontDictCount, int glyphCount)
+        {
+            if (fontDictCount == 0)
+            {
+                return null;
+            }
+
+            byte[] fdSelect = new byte[glyphCount];
+            if (cid.FdSelectFormat == 0)
+            {
+                Array.Copy(cid.FdSelect0, fdSelect, Math.Min(cid.FdSelect0.Length, glyphCount));
+            }
+            else if (cid.FdSelectFormat == 3)
+            {
+                FDRange3[] ranges = cid.FdRanges; // the last entry is the sentinel (end glyph)
+                for (int r = 0; r + 1 < ranges.Length; r++)
+                {
+                    int end = Math.Min(ranges[r + 1].First, glyphCount);
+                    for (int g = ranges[r].First; g < end; g++)
+                    {
+                        fdSelect[g] = ranges[r].FontDictionary;
+                    }
+                }
+            }
+
+            return fdSelect;
         }
 
         private void ReadFormat0Encoding(BigEndianBinaryReader reader)

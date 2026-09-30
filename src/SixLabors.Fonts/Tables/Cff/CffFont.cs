@@ -5,7 +5,8 @@ namespace SixLabors.Fonts.Tables.Cff
 {
     internal class CffFont
     {
-        public CffFont(string name, CffTopDictionary metrics, CffGlyphData[] glyphs)
+        // Modified for Agent DVR: glyphs are a CffGlyphSet (created on request) instead of an array.
+        public CffFont(string name, CffTopDictionary metrics, CffGlyphSet glyphs)
         {
             this.FontName = name;
             this.Metrics = metrics;
@@ -16,6 +17,6 @@ namespace SixLabors.Fonts.Tables.Cff
 
         public CffTopDictionary Metrics { get; set; }
 
-        public CffGlyphData[] Glyphs { get; }
+        public CffGlyphSet Glyphs { get; }
     }
 }

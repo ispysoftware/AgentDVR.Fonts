@@ -27,8 +27,9 @@ namespace SixLabors.Fonts.Tables.Cff
         public FDRange3[] FdRanges { get; set; } = Array.Empty<FDRange3>();
 
         /// <summary>
-        /// Gets or sets the fd select map, which maps glyph # to font #.
+        /// Gets or sets the FDSelect format 0 table: the font DICT index of each glyph.
+        /// Modified for Agent DVR: a flat array (was a Dictionary with one entry per glyph).
         /// </summary>
-        public Dictionary<int, byte> FdSelectMap { get; set; } = new();
+        public byte[] FdSelect0 { get; set; } = Array.Empty<byte>();
     }
 }

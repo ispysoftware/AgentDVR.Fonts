@@ -1,6 +1,7 @@
 // Copyright (c) Six Labors.
 // Licensed under the Apache License, Version 2.0.
 
+using System;
 using System.Numerics;
 
 namespace SixLabors.Fonts.Tables.Cff
@@ -9,23 +10,23 @@ namespace SixLabors.Fonts.Tables.Cff
     {
         private readonly byte[][] globalSubrBuffers;
         private readonly byte[][] localSubrBuffers;
-        private readonly byte[] charStrings;
+        private readonly ReadOnlyMemory<byte> charStrings;
         private readonly int nominalWidthX;
 
+        // Modified for Agent DVR: the charstring is a view into the font's CharStrings data (see
+        // CffGlyphSet) rather than a per-glyph copy, and the unused per-glyph GlyphName is gone.
         public CffGlyphData(
             ushort glyphIndex,
             byte[][] globalSubrBuffers,
             byte[][] localSubrBuffers,
             int nominalWidthX,
-            byte[] charStrings)
+            ReadOnlyMemory<byte> charStrings)
         {
             this.GlyphIndex = glyphIndex;
             this.globalSubrBuffers = globalSubrBuffers;
             this.localSubrBuffers = localSubrBuffers;
             this.nominalWidthX = nominalWidthX;
             this.charStrings = charStrings;
-
-            this.GlyphName = null;
         }
 
         /// <summary>
@@ -34,16 +35,14 @@ namespace SixLabors.Fonts.Tables.Cff
         /// <param name="glyphIndex">The requested glyph id.</param>
         /// <returns>An empty glyph.</returns>
         public static CffGlyphData Empty(ushort glyphIndex)
-            => new(glyphIndex, System.Array.Empty<byte[]>(), System.Array.Empty<byte[]>(), 0, System.Array.Empty<byte>());
+            => new(glyphIndex, Array.Empty<byte[]>(), Array.Empty<byte[]>(), 0, ReadOnlyMemory<byte>.Empty);
 
         public readonly ushort GlyphIndex { get; }
-
-        public string? GlyphName { get; set; }
 
         public Bounds GetBounds()
         {
             using var engine = new CffEvaluationEngine(
-                this.charStrings,
+                this.charStrings.Span,
                 this.globalSubrBuffers,
                 this.localSubrBuffers,
                 this.nominalWidthX);
@@ -54,7 +53,7 @@ namespace SixLabors.Fonts.Tables.Cff
         public void RenderTo(IGlyphRenderer renderer, Vector2 origin, Vector2 scale, Vector2 offset, Matrix3x2 transform)
         {
             using var engine = new CffEvaluationEngine(
-                 this.charStrings,
+                 this.charStrings.Span,
                  this.globalSubrBuffers,
                  this.localSubrBuffers,
                  this.nominalWidthX);

@@ -68,3 +68,10 @@ Modified by iSpyConnect / The Playful Group for Agent DVR. Changes from v1.0.1:
   decoded when the font was first used and all outlines were held for the life of the process. A
   glyph that fails to decode is now empty instead of failing the whole font. WOFF/WOFF2 keep the
   eager path.
+- CFF glyphs on request (performance; not an upstream change): the CharStrings INDEX is read as one
+  block and glyphs are views into it (new `CffGlyphSet`), instead of a per-glyph charstring copy and
+  a `CffGlyphData` built for every glyph at load. The unused glyph names (charset) are no longer read
+  - that reader misread predefined charsets and threw on unknown formats. FDSelect is a flat
+  per-glyph table (`FDRangeProvider` and the per-glyph Dictionary are gone), which also fixes CID
+  fonts using FDSelect format 0: they weren't recognised as CID, so glyphs lost their local
+  subroutines.

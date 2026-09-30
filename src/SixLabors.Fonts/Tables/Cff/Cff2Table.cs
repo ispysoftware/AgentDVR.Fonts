@@ -9,15 +9,14 @@ namespace SixLabors.Fonts.Tables.Cff
     {
         internal const string TableName = "CFF2";
 
-        private readonly CffGlyphData[] glyphs;
+        private readonly CffGlyphSet glyphs;
 
         public Cff2Table(CffFont cff1Font) => this.glyphs = cff1Font.Glyphs;
 
-        public int GlyphCount => this.glyphs.Length;
+        public int GlyphCount => this.glyphs.Count;
 
-        // Modified for Agent DVR: an id past the glyph count is an empty glyph instead of an exception.
-        public CffGlyphData GetGlyph(int index)
-            => (uint)index < (uint)this.glyphs.Length ? this.glyphs[index] : CffGlyphData.Empty((ushort)index);
+        // Modified for Agent DVR: glyphs are created on request; an id past the glyph count is empty.
+        public CffGlyphData GetGlyph(int index) => this.glyphs.Get(index);
 
         public static Cff2Table? Load(FontReader fontReader)
         {
