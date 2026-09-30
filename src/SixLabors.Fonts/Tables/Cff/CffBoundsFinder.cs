@@ -178,11 +178,16 @@ namespace SixLabors.Fonts.Tables.Cff
             }
         }
 
+        // Modified for Agent DVR: a charstring that drew nothing (e.g. a space) has empty bounds. Casting the
+        // untouched float.MaxValue/MinValue seeds to short is unspecified - .NET 11 saturates to +/-32767,
+        // which breaks layout for any text with a space in a CFF font.
         public Bounds GetBounds()
-            => new(
-                (short)Math.Floor(this.minX),
-                (short)Math.Floor(this.minY),
-                (short)Math.Ceiling(this.maxX),
-                (short)Math.Ceiling(this.maxY));
+            => this.firstEval
+                ? Bounds.Empty
+                : new(
+                    (short)Math.Floor(this.minX),
+                    (short)Math.Floor(this.minY),
+                    (short)Math.Ceiling(this.maxX),
+                    (short)Math.Ceiling(this.maxY));
     }
 }

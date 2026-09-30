@@ -46,3 +46,7 @@ Modified by iSpyConnect / The Playful Group for Agent DVR. Changes from v1.0.1:
   of desynchronising every later subtable; Apple version-1 tables are explicitly ignored.
 - cmap format 4: binary search over the (sorted) segments; idDelta applied in the idRangeOffset
   branch; the glyph array index is bounds-checked; glyph 0 is reported as not found.
+- CFF: 16.16 fixed operands are read as one signed 32-bit value (the fraction word was read as
+  signed on its own, putting outlines off by a unit that accumulated); a charstring that draws
+  nothing has empty bounds (the unset float seeds cast to short - +/-32767 on .NET 11); glyph ids
+  past the glyph count are empty glyphs; a font with no CFF table fails at load, not at draw time.

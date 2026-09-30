@@ -28,6 +28,14 @@ namespace SixLabors.Fonts.Tables.Cff
             this.GlyphName = null;
         }
 
+        /// <summary>
+        /// Modified for Agent DVR: a glyph with no charstring, for ids past the font's glyph count.
+        /// </summary>
+        /// <param name="glyphIndex">The requested glyph id.</param>
+        /// <returns>An empty glyph.</returns>
+        public static CffGlyphData Empty(ushort glyphIndex)
+            => new(glyphIndex, System.Array.Empty<byte[]>(), System.Array.Empty<byte[]>(), 0, System.Array.Empty<byte>());
+
         public readonly ushort GlyphIndex { get; }
 
         public string? GlyphName { get; set; }

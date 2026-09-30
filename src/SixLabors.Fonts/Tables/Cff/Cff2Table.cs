@@ -15,8 +15,9 @@ namespace SixLabors.Fonts.Tables.Cff
 
         public int GlyphCount => this.glyphs.Length;
 
+        // Modified for Agent DVR: an id past the glyph count is an empty glyph instead of an exception.
         public CffGlyphData GetGlyph(int index)
-            => this.glyphs[index];
+            => (uint)index < (uint)this.glyphs.Length ? this.glyphs[index] : CffGlyphData.Empty((ushort)index);
 
         public static Cff2Table? Load(FontReader fontReader)
         {

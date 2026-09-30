@@ -30,7 +30,10 @@ namespace SixLabors.Fonts
             CMapTable cmap = reader.GetTable<CMapTable>();
             PostTable post = reader.GetTable<PostTable>();
 
-            ICffTable? cff = reader.TryGetTable<Cff1Table>() ?? (ICffTable?)reader.TryGetTable<Cff2Table>();
+            // Modified for Agent DVR: a CFF-flavoured font with no CFF table is rejected here (so enumeration
+            // skips it) rather than failing later with a NullReferenceException when a glyph is drawn.
+            ICffTable cff = reader.TryGetTable<Cff1Table>() ?? (ICffTable?)reader.TryGetTable<Cff2Table>()
+                ?? throw new InvalidFontFileException("Missing required CFF table.");
 
             // TODO: VORG
             HorizontalMetricsTable htmx = reader.GetTable<HorizontalMetricsTable>();
@@ -50,7 +53,7 @@ namespace SixLabors.Fonts
             ColrTable? colr = reader.TryGetTable<ColrTable>();
             CpalTable? cpal = reader.TryGetTable<CpalTable>();
 
-            CompactFontTables tables = new(cmap, head, hhea, htmx, maxp, name, os2, post, cff!)
+            CompactFontTables tables = new(cmap, head, hhea, htmx, maxp, name, os2, post, cff)
             {
                 Kern = kern,
                 Vhea = vhea,
