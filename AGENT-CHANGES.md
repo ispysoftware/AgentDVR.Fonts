@@ -87,3 +87,22 @@ Modified by iSpyConnect / The Playful Group for Agent DVR. Changes from v1.0.1:
     features under DFLT.)
   - GPOS runs end where the font changes and legacy `kern` only pairs a font's own glyphs, so one
     font's lookups are never matched against another font's glyph ids.
+  - Positioning ran once per text run, so a font used by several runs (or listed both as the main
+    font and as a fallback) had its GPOS applied twice - kerning and mark offsets doubled. It also
+    ran for every fallback family, loading each fallback font even when no glyph needed it. Each
+    font is now positioned once, and only the fonts actually tried.
+- Colour (COLR) glyphs: every layer was flagged as the start of the line, so a line beginning with
+  an emoji measured one line-height per layer. Only the first glyph of a line is flagged now.
+- Nested lookups (GSUB 5/6, GPOS 7/8) are depth-limited to 64 (HarfBuzz's limit) and each nested
+  call spends from the pass's operation budget: lookups that call each other in a cycle recursed
+  until the stack overflowed, which kills the process. Feature and lookup indices from the font,
+  and nested lookup positions, are bounds-checked (out-of-range ones are skipped instead of
+  throwing).
+- Text with nothing to lay out (e.g. only U+FE0F) returns an empty layout instead of throwing; so
+  do empty lines, including a line left empty by trimming whitespace before a wrap. Line metrics
+  are recalculated in one pass rather than four LINQ passes.
+- `glyf`: a simple glyph whose contour end points don't strictly increase is empty, not an outline
+  that indexes past its points.
+- cmap format 14: repeated selector records or mappings keep the first instead of failing the
+  font; the selector-record count is capped by the subtable length; default-UVS ranges include
+  their last code point.

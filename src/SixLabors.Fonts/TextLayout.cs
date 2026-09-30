@@ -23,6 +23,14 @@ namespace SixLabors.Fonts
             }
 
             TextBox textBox = ProcessText(text, options);
+
+            // Modified for Agent DVR: text made only of characters with nothing to lay out (e.g. a lone
+            // variation selector, U+FE0F) produces no lines, and laying those out threw.
+            if (textBox.TextLines.Count == 0)
+            {
+                return Array.Empty<GlyphLayout>();
+            }
+
             return LayoutText(textBox, options);
         }
 
@@ -156,12 +164,14 @@ namespace SixLabors.Fonts
                 }
             }
 
+            List<Font> triedFallbackFonts = new();
             if (!complete)
             {
                 // Finally try our fallback fonts.
                 // We do a complete run here across the whole collection.
                 foreach (Font font in fallbackFonts)
                 {
+                    triedFallbackFonts.Add(font);
                     textRunIndex = 0;
                     codePointIndex = 0;
                     bidiRunIndex = 0;
@@ -187,14 +197,28 @@ namespace SixLabors.Fonts
             // Update the positions of the glyphs in the completed collection.
             // Each set of metrics is associated with single font and will only be updated
             // by that font so it's safe to use a single collection.
+            // Modified for Agent DVR: each distinct face is positioned exactly once, and only fallback fonts
+            // that were actually tried. Positioning is additive (GPOS values, kern advances, offsets), and a
+            // fallback family that is also the primary resolves to the same metrics instance, so it was
+            // kerned and mark-positioned twice. Every fallback font was also positioned - and so fully
+            // loaded - on every layout, even when none was needed.
+            HashSet<FontMetrics> positioned = new(ReferenceEqualityComparer.Instance);
             foreach (TextRun textRun in textRuns)
             {
-                textRun.Font!.FontMetrics.UpdatePositions(positionings);
+                FontMetrics metrics = textRun.Font!.FontMetrics;
+                if (positioned.Add(metrics))
+                {
+                    metrics.UpdatePositions(positionings);
+                }
             }
 
-            foreach (Font font in fallbackFonts)
+            foreach (Font font in triedFallbackFonts)
             {
-                font.FontMetrics.UpdatePositions(positionings);
+                FontMetrics metrics = font.FontMetrics;
+                if (positioned.Add(metrics))
+                {
+                    metrics.UpdatePositions(positionings);
+                }
             }
 
             return BreakLines(text, options, bidiRuns, bidiMap, positionings, layoutMode);
@@ -412,6 +436,10 @@ namespace SixLabors.Fonts
                     continue;
                 }
 
+                // Modified for Agent DVR: only the first glyph of the first entry starts the line. A colour
+                // glyph is several layered metrics, and flagging every layer made measuring count each as a
+                // new line (an emoji at the start of a line measured N line-heights tall).
+                bool isStartOfLine = i == 0;
                 foreach (GlyphMetrics metric in data.Metrics)
                 {
                     glyphs.Add(new GlyphLayout(
@@ -422,7 +450,8 @@ namespace SixLabors.Fonts
                         data.ScaledAdvance,
                         advanceY,
                         GlyphLayoutMode.Horizontal,
-                        i == 0));
+                        isStartOfLine));
+                    isStartOfLine = false;
                 }
 
                 boxLocation.X += data.ScaledAdvance;
@@ -540,6 +569,8 @@ namespace SixLabors.Fonts
                     continue;
                 }
 
+                // Modified for Agent DVR: only the first layer of a colour glyph starts the line.
+                bool isStartOfLine = i == 0;
                 foreach (GlyphMetrics metric in data.Metrics)
                 {
                     // Align the glyph horizontally and vertically centering horizontally around the baseline.
@@ -555,7 +586,8 @@ namespace SixLabors.Fonts
                         advanceX,
                         data.ScaledAdvance,
                         GlyphLayoutMode.Vertical,
-                        i == 0));
+                        isStartOfLine));
+                    isStartOfLine = false;
                 }
 
                 penLocation.Y += data.ScaledAdvance;
@@ -672,6 +704,8 @@ namespace SixLabors.Fonts
                     continue;
                 }
 
+                // Modified for Agent DVR: only the first layer of a colour glyph starts the line.
+                bool isStartOfLine = i == 0;
                 if (data.IsRotated)
                 {
                     foreach (GlyphMetrics metric in data.Metrics)
@@ -685,7 +719,8 @@ namespace SixLabors.Fonts
                             advanceX,
                             data.ScaledAdvance,
                             GlyphLayoutMode.VerticalRotated,
-                            i == 0));
+                            isStartOfLine));
+                        isStartOfLine = false;
                     }
                 }
                 else
@@ -705,7 +740,8 @@ namespace SixLabors.Fonts
                             advanceX,
                             data.ScaledAdvance,
                             GlyphLayoutMode.Vertical,
-                            i == 0));
+                            isStartOfLine));
+                        isStartOfLine = false;
                     }
                 }
 
@@ -1254,10 +1290,36 @@ namespace SixLabors.Fonts
 
             public IReadOnlyList<TextLine> TextLines { get; }
 
+            // Modified for Agent DVR: safe with no lines, or with empty lines (the direction comes from the
+            // first glyph there is; left-to-right if none) - both threw.
             public float ScaledMaxAdvance()
-                => this.TextLines.Max(x => x.ScaledLineAdvance);
+            {
+                if (this.TextLines.Count == 0)
+                {
+                    return 0;
+                }
 
-            public TextDirection TextDirection() => this.TextLines[0][0].TextDirection;
+                float max = float.MinValue;
+                for (int i = 0; i < this.TextLines.Count; i++)
+                {
+                    max = MathF.Max(max, this.TextLines[i].ScaledLineAdvance);
+                }
+
+                return max;
+            }
+
+            public TextDirection TextDirection()
+            {
+                for (int i = 0; i < this.TextLines.Count; i++)
+                {
+                    if (this.TextLines[i].Count > 0)
+                    {
+                        return this.TextLines[i][0].TextDirection;
+                    }
+                }
+
+                return global::SixLabors.Fonts.TextDirection.LeftToRight;
+            }
         }
 
         internal sealed class TextLine
@@ -1354,10 +1416,7 @@ namespace SixLabors.Fonts
                 // Create a new line ensuring we capture the initial metrics.
                 TextLine result = new();
                 result.data.AddRange(this.data.GetRange(index, this.data.Count - index));
-                result.ScaledLineAdvance = result.data.Sum(x => x.ScaledAdvance);
-                result.ScaledMaxAscender = result.data.Max(x => x.ScaledAscender);
-                result.ScaledMaxDescender = result.data.Max(x => x.ScaledDescender);
-                result.ScaledMaxLineHeight = result.data.Max(x => x.ScaledLineHeight);
+                result.RecalculateMetrics();
 
                 // Remove those items from this line.
                 this.data.RemoveRange(index, this.data.Count - index);
@@ -1380,12 +1439,33 @@ namespace SixLabors.Fonts
                 }
 
                 // Lastly recalculate this line metrics.
-                this.ScaledLineAdvance = this.data.Sum(x => x.ScaledAdvance);
-                this.ScaledMaxAscender = this.data.Max(x => x.ScaledAscender);
-                this.ScaledMaxDescender = this.data.Max(x => x.ScaledDescender);
-                this.ScaledMaxLineHeight = this.data.Max(x => x.ScaledLineHeight);
+                this.RecalculateMetrics();
 
                 return result;
+            }
+
+            // Modified for Agent DVR: one pass instead of four LINQ passes, and safe on a line that
+            // trimming left empty (a whitespace-only run before the break) - Max() threw there. An
+            // empty line keeps the initial -1 metrics, as a line nothing was added to has.
+            private void RecalculateMetrics()
+            {
+                float advance = 0;
+                float ascender = -1;
+                float descender = -1;
+                float lineHeight = -1;
+                for (int i = 0; i < this.data.Count; i++)
+                {
+                    GlyphLayoutData d = this.data[i];
+                    advance += d.ScaledAdvance;
+                    ascender = MathF.Max(ascender, d.ScaledAscender);
+                    descender = MathF.Max(descender, d.ScaledDescender);
+                    lineHeight = MathF.Max(lineHeight, d.ScaledLineHeight);
+                }
+
+                this.ScaledLineAdvance = advance;
+                this.ScaledMaxAscender = ascender;
+                this.ScaledMaxDescender = descender;
+                this.ScaledMaxLineHeight = lineHeight;
             }
 
             public TextLine Finalize() => this.BidiReOrder();

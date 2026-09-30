@@ -20,6 +20,20 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
         private const int MaxOperationsMinimum = 16384;
         private const int MaxShapingCharsLength = 0x3FFFFFFF; // Half int max.
 
+        // Modified for Agent DVR: contextual lookups call other lookups, which may be contextual
+        // themselves. A font whose lookups reference each other in a cycle recursed until the stack
+        // overflowed (uncatchable - it takes the process down), and nested calls weren't counted
+        // against the operation budget. Depth is capped as HarfBuzz does (HB_MAX_NESTING_LEVEL) and
+        // every nested call spends from a per-pass budget. Shaping runs synchronously on the calling
+        // thread, so the state is thread-static.
+        private const int MaxNestingLevel = 64;
+
+        [ThreadStatic]
+        private static int nestingLevel;
+
+        [ThreadStatic]
+        private static int nestedOperationsLeft;
+
         /// <summary>
         /// Gets a value indicating whether the glyph represented by the codepoint should be interpreted vertically.
         /// </summary>
@@ -76,6 +90,60 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
         public static int GetMaxAllowableShapingOperationsCount(int length)
             => (int)Math.Min(Math.Max((long)length * MaxOperationsFactor, MaxOperationsMinimum), MaxShapingCharsLength);
 
+        /// <summary>
+        /// Modified for Agent DVR: starts a GSUB/GPOS pass, giving nested lookups
+        /// <paramref name="maxOperations"/> applications between them.
+        /// </summary>
+        /// <param name="maxOperations">The pass's operation budget.</param>
+        public static void BeginShapingPass(int maxOperations)
+        {
+            nestingLevel = 0;
+            nestedOperationsLeft = maxOperations;
+        }
+
+        /// <summary>
+        /// Modified for Agent DVR: enters a nested lookup application, unless that would exceed the
+        /// nesting depth or the pass's operation budget. On success the caller must call
+        /// <see cref="ExitNested"/> in a finally block.
+        /// </summary>
+        /// <returns><see langword="true"/> if the nested lookup may be applied.</returns>
+        public static bool TryEnterNested()
+        {
+            if (nestingLevel >= MaxNestingLevel || nestedOperationsLeft <= 0)
+            {
+                return false;
+            }
+
+            nestedOperationsLeft--;
+            nestingLevel++;
+            return true;
+        }
+
+        /// <summary>Modified for Agent DVR: leaves a nested lookup entered with <see cref="TryEnterNested"/>.</summary>
+        public static void ExitNested() => nestingLevel--;
+
+        /// <summary>
+        /// Modified for Agent DVR: bounds-checked access to a feature or lookup list - the index comes
+        /// straight from the font file and indexing past the list threw.
+        /// </summary>
+        /// <typeparam name="T">The table type.</typeparam>
+        /// <param name="items">The list.</param>
+        /// <param name="index">The index.</param>
+        /// <param name="item">The table, when the index is valid.</param>
+        /// <returns><see langword="true"/> if the index is valid.</returns>
+        public static bool TryGetAt<T>(T[] items, int index, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out T? item)
+            where T : class
+        {
+            if ((uint)index < (uint)items.Length && items[index] is T value)
+            {
+                item = value;
+                return true;
+            }
+
+            item = null;
+            return false;
+        }
+
         public static bool ApplyLookupList(
             FontMetrics fontMetrics,
             GSubTable table,
@@ -96,8 +164,23 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
                 ushort lookupIndex = lookupRecord.LookupListIndex;
                 iterator.Index = index;
                 iterator.Increment(sequenceIndex);
-                GSub.LookupTable lookup = table.LookupList.LookupTables[lookupIndex];
-                hasChanged |= lookup.TrySubstitution(fontMetrics, table, collection, feature, iterator.Index, count - (iterator.Index - index));
+
+                // Modified for Agent DVR: bounds-checked lookup and position, depth/budget-limited nesting.
+                if (iterator.Index >= collection.Count
+                    || !TryGetAt(table.LookupList.LookupTables, lookupIndex, out GSub.LookupTable? lookup)
+                    || !TryEnterNested())
+                {
+                    continue;
+                }
+
+                try
+                {
+                    hasChanged |= lookup.TrySubstitution(fontMetrics, table, collection, feature, iterator.Index, count - (iterator.Index - index));
+                }
+                finally
+                {
+                    ExitNested();
+                }
 
                 // Account for substitutions changing the length of the collection.
                 if (collection.Count != currentCount)
@@ -128,8 +211,23 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
                 ushort lookupIndex = lookupRecord.LookupListIndex;
                 iterator.Index = index;
                 iterator.Increment(sequenceIndex);
-                LookupTable lookup = table.LookupList.LookupTables[lookupIndex];
-                hasChanged |= lookup.TryUpdatePosition(fontMetrics, table, collection, feature, iterator.Index, count - (iterator.Index - index));
+
+                // Modified for Agent DVR: bounds-checked lookup and position, depth/budget-limited nesting.
+                if (iterator.Index >= collection.Count
+                    || !TryGetAt(table.LookupList.LookupTables, lookupIndex, out LookupTable? lookup)
+                    || !TryEnterNested())
+                {
+                    continue;
+                }
+
+                try
+                {
+                    hasChanged |= lookup.TryUpdatePosition(fontMetrics, table, collection, feature, iterator.Index, count - (iterator.Index - index));
+                }
+                finally
+                {
+                    ExitNested();
+                }
             }
 
             return hasChanged;

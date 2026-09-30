@@ -102,6 +102,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
             int maxCount = AdvancedTypographicUtils.GetMaxAllowableShapingCollectionCount(collection.Count);
             int maxOperationsCount = AdvancedTypographicUtils.GetMaxAllowableShapingOperationsCount(collection.Count);
             int currentOperations = 0;
+            AdvancedTypographicUtils.BeginShapingPass(maxOperationsCount);
 
             for (int i = 0; i < collection.Count; i++)
             {
@@ -301,7 +302,13 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
                 ushort[] featureIndices = langSysTables[i].FeatureIndices;
                 for (int j = 0; j < featureIndices.Length; j++)
                 {
-                    FeatureTable featureTable = this.FeatureList.FeatureTables[featureIndices[j]];
+                    // Modified for Agent DVR: feature and lookup indices come from the font; out-of-range
+                    // ones are skipped rather than throwing.
+                    if (!AdvancedTypographicUtils.TryGetAt(this.FeatureList.FeatureTables, featureIndices[j], out FeatureTable? featureTable))
+                    {
+                        continue;
+                    }
+
                     Tag feature = featureTable.FeatureTag;
 
                     if (stageFeature != feature)
@@ -313,8 +320,10 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
                     for (int k = 0; k < lookupListIndices.Length; k++)
                     {
                         ushort lookupIndex = lookupListIndices[k];
-                        LookupTable lookupTable = this.LookupList.LookupTables[lookupIndex];
-                        lookups.Add(new(feature, lookupIndex, lookupTable));
+                        if (AdvancedTypographicUtils.TryGetAt(this.LookupList.LookupTables, lookupIndex, out LookupTable? lookupTable))
+                        {
+                            lookups.Add(new(feature, lookupIndex, lookupTable));
+                        }
                     }
                 }
             }

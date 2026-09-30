@@ -95,23 +95,49 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                         continue;
                     }
 
-                    bool hasChanged = false;
-                    for (int j = 0; j < rule.SequenceLookupRecords.Length; j++)
-                    {
-                        SequenceLookupRecord sequenceLookupRecord = rule.SequenceLookupRecords[j];
-                        LookupTable lookup = table.LookupList.LookupTables[sequenceLookupRecord.LookupListIndex];
-                        ushort sequenceIndex = sequenceLookupRecord.SequenceIndex;
-                        if (lookup.TryUpdatePosition(fontMetrics, table, collection, feature, index + sequenceIndex, 1))
-                        {
-                            hasChanged = true;
-                        }
-                    }
-
-                    return hasChanged;
+                    return ApplyNestedLookups(fontMetrics, table, collection, feature, index, rule.SequenceLookupRecords);
                 }
 
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Modified for Agent DVR: applies a matched rule's lookups (formats 1 and 2) with the lookup index
+        /// and position bounds-checked and nesting depth/budget-limited - a malformed or cyclic font threw
+        /// or overflowed the stack here.
+        /// </summary>
+        private static bool ApplyNestedLookups(
+            FontMetrics fontMetrics,
+            GPosTable table,
+            GlyphPositioningCollection collection,
+            Tag feature,
+            int index,
+            SequenceLookupRecord[] records)
+        {
+            bool hasChanged = false;
+            for (int j = 0; j < records.Length; j++)
+            {
+                SequenceLookupRecord sequenceLookupRecord = records[j];
+                int position = index + sequenceLookupRecord.SequenceIndex;
+                if (position >= collection.Count
+                    || !AdvancedTypographicUtils.TryGetAt(table.LookupList.LookupTables, sequenceLookupRecord.LookupListIndex, out LookupTable? lookup)
+                    || !AdvancedTypographicUtils.TryEnterNested())
+                {
+                    continue;
+                }
+
+                try
+                {
+                    hasChanged |= lookup.TryUpdatePosition(fontMetrics, table, collection, feature, position, 1);
+                }
+                finally
+                {
+                    AdvancedTypographicUtils.ExitNested();
+                }
+            }
+
+            return hasChanged;
         }
 
         internal sealed class LookupType8Format2SubTable : LookupSubTable
@@ -194,19 +220,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                     }
 
                     // It's a match. Perform position update and return true if anything changed.
-                    bool hasChanged = false;
-                    for (int j = 0; j < rule.SequenceLookupRecords.Length; j++)
-                    {
-                        SequenceLookupRecord sequenceLookupRecord = rule.SequenceLookupRecords[j];
-                        LookupTable lookup = table.LookupList.LookupTables[sequenceLookupRecord.LookupListIndex];
-                        ushort sequenceIndex = sequenceLookupRecord.SequenceIndex;
-                        if (lookup.TryUpdatePosition(fontMetrics, table, collection, feature, index + sequenceIndex, 1))
-                        {
-                            hasChanged = true;
-                        }
-                    }
-
-                    return hasChanged;
+                    return ApplyNestedLookups(fontMetrics, table, collection, feature, index, rule.SequenceLookupRecords);
                 }
 
                 return false;
@@ -272,10 +286,22 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.GPos
                     ushort sequenceIndex = lookupRecord.SequenceIndex;
                     ushort lookupIndex = lookupRecord.LookupListIndex;
 
-                    LookupTable lookup = table.LookupList.LookupTables[lookupIndex];
-                    if (lookup.TryUpdatePosition(fontMetrics, table, collection, feature, index + sequenceIndex, count - sequenceIndex))
+                    // Modified for Agent DVR: bounds-checked lookup and position, depth/budget-limited nesting.
+                    int position = index + sequenceIndex;
+                    if (position >= collection.Count
+                        || !AdvancedTypographicUtils.TryGetAt(table.LookupList.LookupTables, lookupIndex, out LookupTable? lookup)
+                        || !AdvancedTypographicUtils.TryEnterNested())
                     {
-                        hasChanged = true;
+                        continue;
+                    }
+
+                    try
+                    {
+                        hasChanged |= lookup.TryUpdatePosition(fontMetrics, table, collection, feature, position, count - sequenceIndex);
+                    }
+                    finally
+                    {
+                        AdvancedTypographicUtils.ExitNested();
                     }
                 }
 

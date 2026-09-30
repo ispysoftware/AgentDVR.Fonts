@@ -41,6 +41,10 @@ namespace SixLabors.Fonts.Tables.General.CMap
             uint length = reader.ReadUInt32();
             uint numVarSelectorRecords = reader.ReadUInt32();
 
+            // Modified for Agent DVR: the record count sizes three arrays up front; a corrupt count
+            // can't claim more 11-byte records than the subtable's length holds.
+            numVarSelectorRecords = Math.Min(numVarSelectorRecords, length > 10 ? (length - 10) / 11 : 0);
+
             var variationSelectors = new Dictionary<int, VariationSelector>();
             int[] varSelectors = new int[numVarSelectorRecords];
             uint[] defaultUVSOffsets = new uint[numVarSelectorRecords];
@@ -120,11 +124,13 @@ namespace SixLabors.Fonts.Tables.General.CMap
                     {
                         int unicodeValue = reader.ReadUInt24();
                         ushort glyphID = reader.ReadUInt16();
-                        selector.UVSMappings.Add(unicodeValue, glyphID);
+                        // Modified for Agent DVR: a repeated entry keeps the first rather than throwing
+                        // (and failing the whole font).
+                        selector.UVSMappings.TryAdd(unicodeValue, glyphID);
                     }
                 }
 
-                variationSelectors.Add(varSelectors[i], selector);
+                variationSelectors.TryAdd(varSelectors[i], selector);
             }
 
             foreach (EncodingRecord encoding in encodings)
@@ -154,9 +160,10 @@ namespace SixLabors.Fonts.Tables.General.CMap
                 }
 
                 // If the sequence is a default UVS, return the default glyph
+                // Modified for Agent DVR: the range end is start + additionalCount, inclusive.
                 for (int i = 0; i < sel.DefaultStartCodes.Count; ++i)
                 {
-                    if (codePoint.Value >= sel.DefaultStartCodes[i] && codePoint.Value < sel.DefaultEndCodes[i])
+                    if (codePoint.Value >= sel.DefaultStartCodes[i] && codePoint.Value <= sel.DefaultEndCodes[i])
                     {
                         return defaultGlyphIndex;
                     }

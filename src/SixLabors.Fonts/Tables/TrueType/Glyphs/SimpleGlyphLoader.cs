@@ -59,6 +59,17 @@ namespace SixLabors.Fonts.Tables.TrueType.Glyphs
             // uint8 or int16 | yCoordinates[]      | First coordinates relative to (0, 0); others are relative to previous point.
             ushort[] endPoints = reader.ReadUInt16Array(count);
 
+            // Modified for Agent DVR: contour end points must strictly increase (as FreeType requires).
+            // The last one sets the point count, so out-of-order ones index outside the outline when
+            // it's walked; treat such a glyph as empty rather than throw.
+            for (int i = 1; i < endPoints.Length; i++)
+            {
+                if (endPoints[i] <= endPoints[i - 1])
+                {
+                    return new SimpleGlyphLoader(bounds);
+                }
+            }
+
             ushort instructionSize = reader.ReadUInt16();
             byte[] instructions = reader.ReadUInt8Array(instructionSize);
 
