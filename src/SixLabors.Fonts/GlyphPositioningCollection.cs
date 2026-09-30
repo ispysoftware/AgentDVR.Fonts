@@ -162,7 +162,7 @@ namespace SixLabors.Fonts
                                 break;
                             }
 
-                            metrics.Add(gm.CloneForRendering(shape.TextRun));
+                            metrics.Add(gm.CloneForRendering(shape.TextRun, codePoint));
                         }
 
                         if (metrics.Count > 0)
@@ -238,7 +238,7 @@ namespace SixLabors.Fonts
                         hasFallBacks = true;
                     }
 
-                    metrics.Add(gm.CloneForRendering(data.TextRun));
+                    metrics.Add(gm.CloneForRendering(data.TextRun, codePoint));
                 }
 
                 if (metrics.Count > 0)

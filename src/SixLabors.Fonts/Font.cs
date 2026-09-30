@@ -243,7 +243,7 @@ namespace SixLabors.Fonts
                 List<Glyph> g = new();
                 foreach (GlyphMetrics metric in metrics)
                 {
-                    g.Add(new(metric.CloneForRendering(textRun), this.Size));
+                    g.Add(new(metric.CloneForRendering(textRun, codePoint), this.Size));
                 }
 
                 glyphs = g;

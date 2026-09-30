@@ -212,8 +212,14 @@ namespace SixLabors.Fonts
         /// This allows caching the original in the font metrics.
         /// </summary>
         /// <param name="textRun">The current text run this glyph belongs to.</param>
+        /// <param name="codePoint">
+        /// The code point this glyph is being laid out for. Modified for Agent DVR: metrics are cached
+        /// per glyph id, and several code points can map to one glyph (every unmapped character shares
+        /// glyph 0), so the cached instance's code point is whichever came first. Layout reads the code
+        /// point for whitespace, line breaks and render skipping, so the clone must carry the real one.
+        /// </param>
         /// <returns>The new <see cref="GlyphMetrics"/>.</returns>
-        internal abstract GlyphMetrics CloneForRendering(TextRun textRun);
+        internal abstract GlyphMetrics CloneForRendering(TextRun textRun, CodePoint codePoint);
 
         /// <summary>
         /// Apply an offset to the glyph.

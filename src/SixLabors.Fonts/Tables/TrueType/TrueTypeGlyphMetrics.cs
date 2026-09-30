@@ -81,11 +81,11 @@ namespace SixLabors.Fonts.Tables.TrueType
             => this.vector = vector;
 
         /// <inheritdoc/>
-        internal override GlyphMetrics CloneForRendering(TextRun textRun)
+        internal override GlyphMetrics CloneForRendering(TextRun textRun, CodePoint codePoint)
             => new TrueTypeGlyphMetrics(
                 this.FontMetrics,
                 this.GlyphId,
-                this.CodePoint,
+                codePoint,
                 GlyphVector.DeepClone(this.vector),
                 this.AdvanceWidth,
                 this.AdvanceHeight,

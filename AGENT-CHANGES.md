@@ -13,3 +13,7 @@ Modified by iSpyConnect / The Playful Group for Agent DVR. Changes from v1.0.1:
   `src/SixLabors.Fonts/SharedInfrastructure`.
 - `TextLayout.cs`: line gap no longer counted in the content area when centring the baseline
   in the 1em line box (fonts with a large line gap, e.g. Tekton Pro, rendered too high).
+- Glyph metrics are cached per glyph id but carried the first code point that used the glyph,
+  so whitespace/newline/render-skip decisions could come from a different character (every
+  unmapped character shares glyph 0). The per-layout clone now takes the real code point; the
+  cache stays one entry per glyph. `ArrayBuilder(int)` no longer starts "full" of defaults.

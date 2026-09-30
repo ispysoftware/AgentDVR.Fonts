@@ -80,11 +80,11 @@ namespace SixLabors.Fonts.Tables.Cff
             => this.glyphData = glyphData;
 
         /// <inheritdoc/>
-        internal override GlyphMetrics CloneForRendering(TextRun textRun)
+        internal override GlyphMetrics CloneForRendering(TextRun textRun, CodePoint codePoint)
             => new CffGlyphMetrics(
                 this.FontMetrics,
                 this.GlyphId,
-                this.CodePoint,
+                codePoint,
                 this.glyphData,
                 this.Bounds,
                 this.AdvanceWidth,
