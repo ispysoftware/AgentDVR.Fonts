@@ -168,3 +168,8 @@ Modified by iSpyConnect / The Playful Group for Agent DVR. Changes from v1.0.1:
   the baseline of lines containing a glyph taller than the ascender (stacked Vietnamese/Thai marks,
   some symbols) without growing the measured height, and read the vertical bearing when a font has
   vmtx. Upstream removed it too.
+- Fallback fonts: a glyph taken from a fallback font got both its horizontal and vertical advance as
+  its positioning bounds (the primary font path sets only the one for the layout direction). Mark
+  attachment subtracts the advances between base and mark, so in horizontal text every mark from a
+  fallback font - Devanagari vowel signs, virama, reph, anusvara - was pushed a whole line down and
+  out of the text box.
