@@ -1,11 +1,15 @@
-# Agent DVR fork of SixLabors.Fonts
+# AgentDVR.Fonts - Agent DVR fork of SixLabors.Fonts
 
 Branch `agent`, based on upstream tag **v1.0.1** (2023-09-15), the last release under the
 Apache License 2.0. Upstream relicensed to the Six Labors Split License on 2023-08-24
-(commit 8c06da29); nothing from after that point is merged here, and fixes for bugs reported
-upstream since then are written independently from the bug description and the OpenType spec.
+(commit 8c06da29); nothing from after that point is merged or copied here. Bugs found upstream
+since then are fixed in our own code, written against the OpenType spec.
 
 Modified by iSpyConnect / The Playful Group for Agent DVR. Changes from v1.0.1:
+
+- Renamed: the assembly and project are `AgentDVR.Fonts` so a modified build doesn't ship under Six
+  Labors' name, and the README is our own. C# namespaces stay `SixLabors.Fonts` to keep the code
+  comparable with its origin. Not affiliated with or endorsed by Six Labors.
 
 - Build: self-contained net10.0 project. The `shared-infrastructure` submodule and upstream's
   global build props (StyleCop, strong naming, artifacts output, extra restore feeds) are
