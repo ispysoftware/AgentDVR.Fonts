@@ -126,6 +126,13 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
                     // We want to assign the same feature lookups to individual sections of the text rather
                     // than the text as a whole to ensure that different language shapers do not interfere
                     // with each other when the text contains multiple languages.
+                    // Modified for Agent DVR: a run also ends where the font changes (fallback fonts), so
+                    // this font's lookups are never matched against another font's glyph ids.
+                    if (!collection.ShouldProcess(fontMetrics, i + 1))
+                    {
+                        break;
+                    }
+
                     GlyphShapingData nextData = collection[i + 1];
                     ScriptClass next = CodePoint.GetScriptClass(nextData.CodePoint);
                     if (next != current &&
@@ -149,8 +156,11 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
                     }
                 }
 
+                // Modified for Agent DVR: the shaper is chosen for what this font can render, and is given
+                // this font (it used the text run's primary font, wrong during a fallback pass).
                 Tag unicodeScriptTag = this.GetUnicodeScriptTag(current);
-                BaseShaper shaper = ShaperFactory.Create(current, unicodeScriptTag, collection.TextOptions);
+                ScriptClass shaperScript = AdvancedTypographicUtils.GetShaperScript(collection, index, count, current);
+                BaseShaper shaper = ShaperFactory.Create(shaperScript, unicodeScriptTag, fontMetrics, collection.TextOptions);
 
                 if (shaper.MarkZeroingMode == MarkZeroingMode.PreGPos)
                 {

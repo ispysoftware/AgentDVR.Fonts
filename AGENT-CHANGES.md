@@ -75,3 +75,15 @@ Modified by iSpyConnect / The Playful Group for Agent DVR. Changes from v1.0.1:
   per-glyph table (`FDRangeProvider` and the per-glyph Dictionary are gone), which also fixes CID
   fonts using FDSelect format 0: they weren't recognised as CID, so glyphs lost their local
   subroutines.
+- Fallback fonts (`TextOptions.FallbackFontFamilies`):
+  - Replacing a missing glyph removed the placeholder only if the first glyph shaped at that offset
+    was found, and inserted replacements at i, i+1, i+3... (a cumulative index); now the placeholder
+    goes with the first replacement and replacements are consecutive.
+  - The Indic, Hangul and Universal shapers looked glyphs up (dotted circle, decompositions,
+    zero-width checks) in the text run's primary font; they now use the font being shaped.
+  - A script-specific shaper only runs where the font has glyphs for that script's characters, so
+    the primary font no longer reorders or inserts dotted circles into runs it can't render.
+    (Upstream keys this on the script list, which would also drop joining in Arabic fonts that file
+    features under DFLT.)
+  - GPOS runs end where the font changes and legacy `kern` only pairs a font's own glyphs, so one
+    font's lookups are never matched against another font's glyph ids.

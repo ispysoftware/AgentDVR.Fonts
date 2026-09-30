@@ -40,6 +40,39 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
         public static int GetMaxAllowableShapingCollectionCount(int length)
             => (int)Math.Min(Math.Max((long)length * MaxLengthFactor, MaxLengthMinimum), MaxShapingCharsLength);
 
+        /// <summary>
+        /// Modified for Agent DVR: the script whose shaper should run over a script run in this font. A
+        /// script-specific shaper only runs if the font has a glyph for at least one of the run's own
+        /// characters; otherwise the default shaper is used. With fallback fonts the primary font sees runs
+        /// it can't render, and the Indic/Hangul/USE shapers would reorder them and insert dotted circles
+        /// that the fallback font's pass then has to reconcile. (Upstream decides from the font's script
+        /// list, which would also drop joining in Arabic fonts that file their features under DFLT.)
+        /// </summary>
+        /// <param name="collection">The glyphs.</param>
+        /// <param name="index">The run start.</param>
+        /// <param name="count">The run length.</param>
+        /// <param name="script">The run's script.</param>
+        /// <returns><paramref name="script"/>, or <see cref="ScriptClass.Unknown"/> for the default shaper.</returns>
+        public static ScriptClass GetShaperScript(IGlyphShapingCollection collection, int index, int count, ScriptClass script)
+        {
+            if (script is ScriptClass.Common or ScriptClass.Unknown or ScriptClass.Inherited)
+            {
+                return script;
+            }
+
+            int end = Math.Min(index + count, collection.Count);
+            for (int i = index; i < end; i++)
+            {
+                GlyphShapingData data = collection[i];
+                if (data.GlyphId != 0 && CodePoint.GetScriptClass(data.CodePoint) == script)
+                {
+                    return script;
+                }
+            }
+
+            return ScriptClass.Unknown;
+        }
+
         public static int GetMaxAllowableShapingOperationsCount(int length)
             => (int)Math.Min(Math.Max((long)length * MaxOperationsFactor, MaxOperationsMinimum), MaxShapingCharsLength);
 

@@ -12,9 +12,14 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
         /// </summary>
         /// <param name="script">The script language.</param>
         /// <param name="unicodeScriptTag">The unicode script tag found in the font matching the script.</param>
+        /// <param name="fontMetrics">
+        /// The font being shaped. Modified for Agent DVR: shapers that look up glyphs (dotted circle,
+        /// decompositions, zero-width checks) used the text run's primary font, which is wrong while a
+        /// fallback font is shaping the run.
+        /// </param>
         /// <param name="textOptions">The text options.</param>
         /// <returns>A shaper for the given script.</returns>
-        public static BaseShaper Create(ScriptClass script, Tag unicodeScriptTag, TextOptions textOptions)
+        public static BaseShaper Create(ScriptClass script, Tag unicodeScriptTag, FontMetrics fontMetrics, TextOptions textOptions)
             => script switch
             {
                 // Arabic
@@ -28,7 +33,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
                 or ScriptClass.PsalterPahlavi => new ArabicShaper(script, textOptions),
 
                 // Hangul
-                ScriptClass.Hangul => new HangulShaper(script, textOptions),
+                ScriptClass.Hangul => new HangulShaper(script, textOptions, fontMetrics),
 
                 // Indic
                 ScriptClass.Bengali
@@ -40,7 +45,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
                 or ScriptClass.Oriya
                 or ScriptClass.Tamil
                 or ScriptClass.Telugu
-                or ScriptClass.Khmer => new IndicShaper(script, unicodeScriptTag, textOptions),
+                or ScriptClass.Khmer => new IndicShaper(script, unicodeScriptTag, textOptions, fontMetrics),
 
                 // Universal
                 ScriptClass.Balinese
@@ -82,7 +87,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
                 or ScriptClass.Tibetan
                 or ScriptClass.Tifinagh
                 or ScriptClass.Tirhuta
-                => new UniversalShaper(script, textOptions),
+                => new UniversalShaper(script, textOptions, fontMetrics),
                 _ => new DefaultShaper(script, textOptions),
             };
     }

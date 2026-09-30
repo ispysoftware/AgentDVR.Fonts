@@ -316,6 +316,13 @@ namespace SixLabors.Fonts
                             break;
                         }
 
+                        // Modified for Agent DVR: only kern pairs of this font's own glyphs (fallback fonts
+                        // share the collection; a pair lookup on another font's glyph id is meaningless).
+                        if (!collection.ShouldProcess(this, index - 1) || !collection.ShouldProcess(this, index))
+                        {
+                            continue;
+                        }
+
                         kern.UpdatePositions(this, collection, index - 1, index);
                     }
                 }

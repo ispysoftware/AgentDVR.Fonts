@@ -66,10 +66,13 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
             { new byte[] { None, 0 }, new byte[] { None, 1 }, new byte[] { None, 0 }, new byte[] { None, 0 }, new byte[] { Decompose, 2 }, new byte[] { Decompose, 3 }, new byte[] { ToneMark, 0 } },
         };
 
-        public HangulShaper(ScriptClass script, TextOptions textOptions)
+        private readonly FontMetrics fontMetrics;
+
+        // Modified for Agent DVR: glyph lookups use the font being shaped (fontMetrics), not the text
+        // run's primary font, so fallback fonts shape correctly.
+        public HangulShaper(ScriptClass script, TextOptions textOptions, FontMetrics fontMetrics)
             : base(script, MarkZeroingMode.None, textOptions)
-        {
-        }
+            => this.fontMetrics = fontMetrics;
 
         /// <inheritdoc/>
         protected override void PlanFeatures(IGlyphShapingCollection collection, int index, int count)
@@ -218,7 +221,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
             int l = (LBase + (s / VCount)) | 0;
             int v = VBase + (s % VCount);
 
-            FontMetrics metrics = data.TextRun.Font!.FontMetrics;
+            FontMetrics metrics = this.fontMetrics;
 
             // Don't decompose if all of the components are not available
             if (!metrics.TryGetGlyphId(new(l), out ushort ljmo) ||
@@ -308,7 +311,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
 
                 // Replace with a composed glyph if supported by the font,
                 // otherwise apply the proper OpenType features to each component.
-                FontMetrics metrics = data.TextRun.Font!.FontMetrics;
+                FontMetrics metrics = this.fontMetrics;
                 if (metrics.TryGetGlyphId(s, out ushort id))
                 {
                     int del = prevType == V ? 3 : 2;
@@ -357,7 +360,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
 
             // Move tone mark to the beginning of the previous syllable, unless it is zero width
             // We don't have access to the glyphs metrics as an array when substituting so we have to loop.
-            FontMetrics fontMetrics = data.TextRun.Font!.FontMetrics;
+            FontMetrics fontMetrics = this.fontMetrics;
             TextAttributes textAttributes = data.TextRun.TextAttributes;
             TextDecorations textDecorations = data.TextRun.TextDecorations;
             LayoutMode layoutMode = collection.TextOptions.LayoutMode;
@@ -381,7 +384,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
         private int InsertDottedCircle(GlyphSubstitutionCollection collection, GlyphShapingData data, int index)
         {
             bool after = false;
-            FontMetrics fontMetrics = data.TextRun.Font!.FontMetrics;
+            FontMetrics fontMetrics = this.fontMetrics;
 
             if (fontMetrics.TryGetGlyphId(new(DottedCircle), out ushort id))
             {

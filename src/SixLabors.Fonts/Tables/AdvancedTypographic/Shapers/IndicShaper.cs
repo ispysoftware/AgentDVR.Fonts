@@ -45,13 +45,17 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
         private const int DottedCircle = 0x25cc;
 
         private readonly TextOptions textOptions;
+        private readonly FontMetrics fontMetrics;
         private ShapingConfiguration indicConfiguration;
         private readonly bool isOldSpec;
 
-        public IndicShaper(ScriptClass script, Tag unicodeScriptTag, TextOptions textOptions)
+        // Modified for Agent DVR: glyph lookups use the font being shaped (fontMetrics), not the text
+        // run's primary font, so fallback fonts shape correctly.
+        public IndicShaper(ScriptClass script, Tag unicodeScriptTag, TextOptions textOptions, FontMetrics fontMetrics)
             : base(script, MarkZeroingMode.None, textOptions)
         {
             this.textOptions = textOptions;
+            this.fontMetrics = fontMetrics;
 
             if (IndicConfigurations.ContainsKey(script))
             {
@@ -108,7 +112,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
             for (int i = end - 1; i >= 0; i--)
             {
                 GlyphShapingData data = substitutionCollection[i];
-                FontMetrics fontMetrics = data.TextRun.Font!.FontMetrics;
+                FontMetrics fontMetrics = this.fontMetrics;
 
                 if ((Decompositions.TryGetValue(data.CodePoint.Value, out int[]? decompositions) ||
                     UniversalShapingData.Decompositions.TryGetValue(data.CodePoint.Value, out decompositions)) &&
@@ -211,7 +215,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
             for (int i = 0; i < count; i++)
             {
                 GlyphShapingData data = substitutionCollection[i + index];
-                FontMetrics fontMetrics = data.TextRun.Font!.FontMetrics;
+                FontMetrics fontMetrics = this.fontMetrics;
 
                 fontMetrics.TryGetGlyphId(new(0x0020), out ushort spc);
 
@@ -250,7 +254,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
                     goto Increment;
                 }
 
-                FontMetrics fontMetrics = data.TextRun.Font!.FontMetrics;
+                FontMetrics fontMetrics = this.fontMetrics;
                 if (!fontMetrics.TryGetGSubTable(out GSubTable? gSubTable))
                 {
                     break;
@@ -792,7 +796,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
             }
 
             GlyphShapingData data = buffer[0];
-            FontMetrics fontMetrics = data.TextRun.Font!.FontMetrics;
+            FontMetrics fontMetrics = this.fontMetrics;
 
             if (fontMetrics.TryGetGSubTable(out GSubTable? gSubTable))
             {
@@ -875,7 +879,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
                 // reordering before applying all the remaining font features to the entire
                 // cluster.
                 GlyphShapingData data = substitutionCollection[start];
-                FontMetrics fontMetrics = data.TextRun.Font!.FontMetrics;
+                FontMetrics fontMetrics = this.fontMetrics;
                 if (!fontMetrics.TryGetGSubTable(out GSubTable? gSubTable))
                 {
                     break;

@@ -165,9 +165,14 @@ namespace SixLabors.Fonts
                             metrics.Add(gm.CloneForRendering(shape.TextRun, codePoint));
                         }
 
+                        // Modified for Agent DVR: the fallback glyph is removed when the FIRST replacement is
+                        // inserted (it checked j == 0, so when the first shaped glyph at this offset was itself
+                        // missing the placeholder stayed alongside the replacements), and replacements go at
+                        // i, i+1, i+2... (it inserted at i += replacementCount - i, i+1, i+3 - mispositioning a
+                        // third glyph and skipping one on the way out).
                         if (metrics.Count > 0)
                         {
-                            if (j == 0)
+                            if (replacementCount == 0)
                             {
                                 // There should only be a single fallback glyph at this position from the previous collection.
                                 this.glyphs.RemoveAt(i);
@@ -182,9 +187,15 @@ namespace SixLabors.Fonts
                                 maxAdvancedHeight = Math.Max(maxAdvancedHeight, metrics[k].AdvanceHeight);
                             }
 
-                            this.glyphs.Insert(i += replacementCount, new(offset, new(shape, true) { Bounds = new(0, 0, maxAdvancedWidth, maxAdvancedHeight) }, pointSize, metrics.ToArray()));
+                            this.glyphs.Insert(i + replacementCount, new(offset, new(shape, true) { Bounds = new(0, 0, maxAdvancedWidth, maxAdvancedHeight) }, pointSize, metrics.ToArray()));
                             replacementCount++;
                         }
+                    }
+
+                    // Continue after the inserted glyphs.
+                    if (replacementCount > 0)
+                    {
+                        i += replacementCount - 1;
                     }
                 }
                 else

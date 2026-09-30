@@ -42,10 +42,13 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
 
         private const int DottedCircle = 0x25cc;
 
-        public UniversalShaper(ScriptClass script, TextOptions textOptions)
+        private readonly FontMetrics fontMetrics;
+
+        // Modified for Agent DVR: glyph lookups use the font being shaped (fontMetrics), not the text
+        // run's primary font, so fallback fonts shape correctly.
+        public UniversalShaper(ScriptClass script, TextOptions textOptions, FontMetrics fontMetrics)
            : base(script, MarkZeroingMode.PreGPos, textOptions)
-        {
-        }
+            => this.fontMetrics = fontMetrics;
 
         /// <inheritdoc/>
         protected override void PlanFeatures(IGlyphShapingCollection collection, int index, int count)
@@ -83,7 +86,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
         protected override void AssignFeatures(IGlyphShapingCollection collection, int index, int count)
             => DecomposeSplitVowels(collection, index, count);
 
-        private static void DecomposeSplitVowels(IGlyphShapingCollection collection, int index, int count)
+        private void DecomposeSplitVowels(IGlyphShapingCollection collection, int index, int count)
         {
             if (collection is not GlyphSubstitutionCollection substitutionCollection)
             {
@@ -95,7 +98,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
             for (int i = end - 1; i >= 0; i--)
             {
                 GlyphShapingData data = substitutionCollection[i];
-                FontMetrics fontMetrics = data.TextRun.Font!.FontMetrics;
+                FontMetrics fontMetrics = this.fontMetrics;
                 if (UniversalShapingData.Decompositions.TryGetValue(data.CodePoint.Value, out int[]? decompositions) && decompositions != null)
                 {
                     Span<ushort> ids = buffer.Slice(0, decompositions.Length);
@@ -217,7 +220,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
             }
         }
 
-        private static void Reorder(IGlyphShapingCollection collection, int index, int count)
+        private void Reorder(IGlyphShapingCollection collection, int index, int count)
         {
             if (collection is not GlyphSubstitutionCollection substitutionCollection)
             {
@@ -239,7 +242,7 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic.Shapers
                     goto Increment;
                 }
 
-                FontMetrics fontMetrics = data.TextRun.Font!.FontMetrics;
+                FontMetrics fontMetrics = this.fontMetrics;
                 if (type == "broken_cluster" && fontMetrics.TryGetGlyphId(new(DottedCircle), out ushort id))
                 {
                     // Insert after possible Repha.

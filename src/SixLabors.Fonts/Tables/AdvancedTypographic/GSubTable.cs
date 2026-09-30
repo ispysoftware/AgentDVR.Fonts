@@ -138,8 +138,11 @@ namespace SixLabors.Fonts.Tables.AdvancedTypographic
                     }
                 }
 
+                // Modified for Agent DVR: the shaper is chosen for what this font can render, and is given
+                // this font (it used the text run's primary font, wrong during a fallback pass).
                 Tag unicodeScriptTag = this.GetUnicodeScriptTag(current);
-                BaseShaper shaper = ShaperFactory.Create(current, unicodeScriptTag, collection.TextOptions);
+                ScriptClass shaperScript = AdvancedTypographicUtils.GetShaperScript(collection, index, count, current);
+                BaseShaper shaper = ShaperFactory.Create(shaperScript, unicodeScriptTag, fontMetrics, collection.TextOptions);
 
                 // Plan substitution features for each glyph.
                 // Shapers can adjust the count during initialization and feature processing so we must capture
