@@ -63,3 +63,8 @@ Modified by iSpyConnect / The Playful Group for Agent DVR. Changes from v1.0.1:
   65535 are "not found".
 - Universal Shaping Engine: the reph check read the glyph at the run-relative match index without
   the run offset (wrong glyph, or a crash, for runs not starting at 0).
+- Lazy `glyf` decoding (performance; not an upstream change): for plain sfnt fonts the raw table is
+  kept and each glyph is decoded on first request, published lock-free. Previously every glyph was
+  decoded when the font was first used and all outlines were held for the life of the process. A
+  glyph that fails to decode is now empty instead of failing the whole font. WOFF/WOFF2 keep the
+  eager path.
